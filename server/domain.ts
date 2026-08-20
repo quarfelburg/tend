@@ -9,6 +9,7 @@ import type {
   FeedConfig,
   FeedMindContext,
   FeedView,
+  HeartbeatCardDispositionKind,
   MindContextBinding,
   MindContextFeedObservation,
   MindContextHealth,
@@ -51,6 +52,86 @@ import { mobileActionConfirmation, projectMobileCard, projectMobileRoutineAction
 
 function appendHistory(card: Card, type: string, detail?: string): void {
   card.history.push({ at: isoNow(), type, detail });
+}
+
+const ANTI_ADHD_HEARTBEAT_FEED_ID = "anti-adhd-loose-ends-review-surface-unfinished-codex-ses";
+const ANTI_ADHD_HEARTBEAT_AUTOMATION_ID = "anti-adhd-codex-session-heartbeat";
+const PERSONAL_OKRS_FEED_ID = "personal-okrs";
+
+function plainCardItems(card: Card, blockId: string): string[] {
+  const block = card.blocks.find((item) => item.id === blockId);
+  if (!block?.items) return [];
+  return block.items.map((item) => typeof item === "string" ? item : item.detail ? `${item.label}: ${item.detail}` : item.label);
+}
+
+function heartbeatContentFingerprint(card: Card): string {
+  return digest({
+    title: card.title,
+    why: card.why,
+    sources: plainCardItems(card, "sources"),
+    codexTask: card.blocks.find((block) => block.id === "codex-task")?.text,
+  });
+}
+
+function isAntiAdhdHeartbeatFeed(feedId: string): boolean {
+  return feedId === ANTI_ADHD_HEARTBEAT_FEED_ID;
+}
+
+type WorkCompletionResult = {
+  response: string;
+  blocks?: CardBlock[];
+  proposedAction?: ProposedAction;
+  actions?: CardAction[];
+  done?: boolean;
+  postAction?: PostActionCompletion;
+};
+
+function normalizedCompletionText(value: string | undefined): string {
+  return (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function normalizedOwnedTask(value: string | undefined): string {
+  return normalizedCompletionText(value)
+    .normalize("NFKD")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function completionMentionsCreatedReviewArtifact(response: string): boolean {
+  return /\b(?:created|generated|wrote|saved|produced|drafted)\b[^.!?\n]{0,180}\b(?:artifact|board|brief|packet|companion|html|pdf|deck|document|file)\b/i.test(response);
+}
+
+function hasReviewArtifactLink(blocks: CardBlock[]): boolean {
+  return blocks.some((block) => block.type === "evidence" && block.items?.some((item) => typeof item !== "string" && Boolean(item.href)));
+}
+
+export function validateAntiAdhdReviewCompletion(feedId: string, work: Pick<WorkItem, "kind" | "instruction">, result: WorkCompletionResult): void {
+  if (!isAntiAdhdHeartbeatFeed(feedId) || result.done || (work.kind !== "instruction" && work.kind !== "scoped_instruction")) return;
+  if (!result.blocks) {
+    throw new Error("Loose Ends work returning to review must include refreshed card blocks. Retire completed instructions and make the current Hayden decision the Next block.");
+  }
+  if (!result.actions?.length) {
+    throw new Error("Loose Ends work returning to review must include refreshed decision actions for the card's current state.");
+  }
+  const next = result.blocks.find((block) => normalizedCompletionText(block.label) === "next");
+  if (!next?.text?.trim()) {
+    throw new Error("Loose Ends work returning to review must include a non-empty Next block with Hayden's current decision.");
+  }
+  const recommendedTask = result.blocks.find((block) => {
+    const label = normalizedCompletionText([block.label, block.summary].filter(Boolean).join(" "));
+    return block.id === "codex-task" || label.includes("recommended codex task") || label.includes("exact codex task");
+  });
+  const taskText = recommendedTask?.text ?? recommendedTask?.value;
+  if (!taskText?.trim()) {
+    throw new Error("Loose Ends work returning to review must include a non-empty Recommended Codex task for work after Hayden's decision.");
+  }
+  const completedInstruction = normalizedCompletionText(work.instruction);
+  if (normalizedCompletionText(taskText) === completedInstruction || result.actions.some((action) => normalizedCompletionText(action.instruction) === completedInstruction)) {
+    throw new Error("Loose Ends cannot return a completed instruction as the Recommended Codex task or next action. Advance the card to the current decision and downstream work.");
+  }
+  if (completionMentionsCreatedReviewArtifact(result.response) && !hasReviewArtifactLink(result.blocks)) {
+    throw new Error("The completion receipt says a review artifact was created, but the returned card has no linked evidence item. Import the companion and add its review href before completion.");
+  }
 }
 
 type WorkCaller =
@@ -177,7 +258,7 @@ function hasText(value: unknown): value is string {
 }
 
 function isSafeCardHref(value: string): boolean {
-  if (value.startsWith("/api/artifacts/")) return true;
+  if (value.startsWith("/api/artifacts/") || value.startsWith("/review-artifacts/")) return true;
   try {
     const url = new URL(value);
     return url.protocol === "http:" || url.protocol === "https:";
@@ -236,6 +317,15 @@ function validateCardBlocks(blocks: unknown): asserts blocks is CardBlock[] {
     }
     if (block.label !== undefined && typeof block.label !== "string") {
       throw new Error(`${blockDescription(block, index)} has a non-string \`label\`.`);
+    }
+    if (block.summary !== undefined && typeof block.summary !== "string") {
+      throw new Error(`${blockDescription(block, index)} has a non-string \`summary\`.`);
+    }
+    if (block.collapsible !== undefined && typeof block.collapsible !== "boolean") {
+      throw new Error(`${blockDescription(block, index)} has a non-boolean \`collapsible\`.`);
+    }
+    if (block.defaultOpen !== undefined && typeof block.defaultOpen !== "boolean") {
+      throw new Error(`${blockDescription(block, index)} has a non-boolean \`defaultOpen\`.`);
     }
     switch (block.type) {
       case "memo":
@@ -1588,6 +1678,56 @@ export class AttentionDomain {
     return card;
   }
 
+  async setHeartbeatCardDisposition(
+    feedId: string,
+    cardId: string,
+    disposition: HeartbeatCardDispositionKind,
+    parkedUntil?: string,
+  ): Promise<Card> {
+    if (!isAntiAdhdHeartbeatFeed(feedId)) throw new Error("Heartbeat dispositions are only available in the anti-ADHD loose-ends feed.");
+    if (disposition === "parked" && !/^\d{4}-\d{2}-\d{2}$/.test(parkedUntil ?? "")) {
+      throw new Error("Choose a valid date before parking this card.");
+    }
+    if (disposition !== "parked" && parkedUntil) throw new Error("Only parked cards can have a return date.");
+    return this.store.serialize(async () => {
+      const config = await this.store.readConfig(feedId);
+      const card = await this.store.readCard(feedId, cardId);
+      if (
+        (card.status !== "to_review_new" && card.status !== "to_review_updated")
+        || card.readyForPass > config.currentPass
+        || card.sweep?.hidden
+      ) {
+        throw new Error("Only a card under review can be finished, closed, or parked.");
+      }
+      const now = isoNow();
+      card.status = "done";
+      card.completedAt = now;
+      card.completionDisposition = disposition;
+      appendHistory(card, `user.card_${disposition}`, disposition === "parked" ? parkedUntil : undefined);
+      await this.store.writeCard(card);
+      await this.store.recordHeartbeatCardDisposition(feedId, {
+        cardId: card.id,
+        title: card.title,
+        why: card.why,
+        disposition,
+        status: "suppressed",
+        recordedAt: now,
+        updatedAt: now,
+        ...(parkedUntil ? { parkedUntil } : {}),
+        contentFingerprint: heartbeatContentFingerprint(card),
+        sources: plainCardItems(card, "sources"),
+        risks: plainCardItems(card, "risks"),
+      }, ANTI_ADHD_HEARTBEAT_AUTOMATION_ID);
+      await this.store.appendEvent({
+        feedId,
+        cardId,
+        type: `card.${disposition}`,
+        ...(parkedUntil ? { detail: { parkedUntil } } : {}),
+      });
+      return card;
+    });
+  }
+
   async upsertRoutineActionGroup(feedId: string, input: Pick<RoutineActionGroup, "id" | "label" | "summary" | "proposedAction" | "items">): Promise<RoutineActionGroup> {
     if (!input.id.trim() || !input.label.trim() || !input.summary.trim()) throw new Error("Routine action group id, label, and summary are required.");
     if (!input.proposedAction.label.trim() || !input.proposedAction.instruction.trim()) throw new Error("Routine action group approval needs a visible label and exact instruction.");
@@ -1720,6 +1860,7 @@ export class AttentionDomain {
     return this.store.serialize(async () => {
       const feed = await this.store.readFeed(feedId);
       const card = await this.store.readCard(feedId, cardId);
+      const previousCompletionDisposition = card.completionDisposition;
       if (card.routineActionGroupId) throw new Error("This card belongs to a routine action group. Review the group instead.");
       const activeWork = (await this.store.readWorkItems(feedId)).filter((work) =>
         work.cardId === cardId &&
@@ -1740,6 +1881,9 @@ export class AttentionDomain {
       card.completionDisposition = undefined;
       appendHistory(card, "user.returned_to_review");
       await this.store.writeCard(card);
+      if (isAntiAdhdHeartbeatFeed(feedId) && (previousCompletionDisposition === "finished" || previousCompletionDisposition === "closed" || previousCompletionDisposition === "parked")) {
+        await this.store.reopenHeartbeatCardDisposition(feedId, cardId, ANTI_ADHD_HEARTBEAT_AUTOMATION_ID);
+      }
       await this.store.appendEvent({ feedId, cardId, type: "card.returned_to_review", detail: { cancelledWorkIds: activeWork.map((work) => work.id) } });
       return card;
     });
@@ -2136,7 +2280,7 @@ export class AttentionDomain {
     });
   }
 
-  async completeWork(feedId: string, workId: string, token: string, result: { response: string; blocks?: CardBlock[]; proposedAction?: ProposedAction; actions?: CardAction[]; done?: boolean; postAction?: PostActionCompletion }): Promise<WorkItem> {
+  async completeWork(feedId: string, workId: string, token: string, result: WorkCompletionResult): Promise<WorkItem> {
     if (result.blocks) validateCardBlocks(result.blocks);
     validateCardActions(result.actions);
     return this.store.serialize(async () => {
@@ -2144,6 +2288,7 @@ export class AttentionDomain {
       if (work.status !== "working") throw new Error("Work item is not currently claimed.");
       if (work.capabilityToken !== token) throw new Error("Invalid scoped work capability token.");
       if (!result.response?.trim()) throw new Error("A work response is required.");
+      validateAntiAdhdReviewCompletion(feedId, work, result);
       if (work.intent === "sweep_rejudge") {
         if (!work.feedbackId) throw new Error("Sweep rejudgment work is missing its feedback trace.");
         const trace = await this.store.readSweepFeedback(feedId, work.feedbackId);
@@ -2534,6 +2679,7 @@ export class AttentionDomain {
     safeIdentifier(input.id, "Card id");
     validateCardBlocks(input.blocks);
     validateCardActions(input.actions);
+    await this.validatePersonalOkrTaskOwnership(feedId, input.actions);
     const sourceRunIds = validateSourceRunIds(input.sourceRunIds);
     return this.store.serialize(async () => {
       const config = await this.store.readConfig(feedId);
@@ -2568,6 +2714,32 @@ export class AttentionDomain {
       await this.store.appendEvent({ feedId, cardId: card.id, type: existing ? "card.updated" : "card.created" });
       return card;
     });
+  }
+
+  private async validatePersonalOkrTaskOwnership(feedId: string, actions: CardAction[] | undefined): Promise<void> {
+    const counterpartFeedId = feedId === PERSONAL_OKRS_FEED_ID
+      ? ANTI_ADHD_HEARTBEAT_FEED_ID
+      : feedId === ANTI_ADHD_HEARTBEAT_FEED_ID
+        ? PERSONAL_OKRS_FEED_ID
+        : null;
+    if (!counterpartFeedId || !actions?.length) return;
+
+    const incomingTasks = new Set(actions
+      .filter((action) => action.behavior === "queue_instruction" || action.behavior === "approve_action")
+      .map((action) => normalizedOwnedTask(action.instruction))
+      .filter(Boolean));
+    if (!incomingTasks.size || !(await this.store.listFeedIds()).includes(counterpartFeedId)) return;
+
+    const activeStatuses = new Set<Card["status"]>(["to_review_new", "to_review_updated", "queued", "working", "approved_blocked"]);
+    const counterpartCards = await this.store.listCards(counterpartFeedId);
+    const duplicate = counterpartCards
+      .filter((card) => activeStatuses.has(card.status))
+      .flatMap((card) => card.actions ?? [])
+      .map((action) => normalizedOwnedTask(action.instruction))
+      .find((instruction) => instruction && incomingTasks.has(instruction));
+    if (duplicate) {
+      throw new Error("Personal OKRs and Loose Ends cannot own the same active task. Keep execution in Loose Ends and use the OKR card for progress evidence, status, or the next OKR-level decision.");
+    }
   }
 
   async createImprovementCard(feedId: string, title: string, brief: string, instruction: string): Promise<Card> {

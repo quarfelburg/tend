@@ -65,7 +65,16 @@ external-recipient risk confirmation for those named recipients while the verifi
 matches; do not ask for duplicate chat approval. When drafting or revising an email reply, write as the owner of \`sourceMailbox\` and preserve that sender's voice and signature unless the user's instruction explicitly changes sender. For routine actions, reread
 every authoritative source item before mutating any of them. If any item changed or needs judgment,
 fail the group so its items return to individual review. Record the result, evidence, uncertainty,
-and any proposed policy learning. An approved action may include the feed's configured completion
+and any proposed policy learning. When work creates an HTML review companion, import it with
+\`tend cli artifact:import-file --path <file>\`, add the returned href to the card's Sources evidence
+as \`Open HTML review\`, and include the same Markdown link in the first two sentences of the
+completion response. A completion receipt that mentions a review artifact without linking it is
+incomplete. For Loose Ends work that returns a card to review, \`work:complete\` must include refreshed
+\`blocks\` and \`actions\`: retire the instruction that just finished, make Hayden's current decision the
+Next block, and make Recommended Codex task describe only the work after that decision. Never return
+the completed instruction as future work. If any board, brief, packet, companion, HTML, PDF, deck,
+document, or file was created, the refreshed Sources evidence must contain its imported review href.
+The ledger rejects incomplete review returns. An approved action may include the feed's configured completion
 cleanup in the same authorization receipt. When it does, perform that predictable cleanup after the
 main action succeeds, verify the authoritative result, and report it in \`postAction\`; never ask the
 user to click Archive separately. Use disposition \`done\` when no concrete next step remains, or

@@ -275,6 +275,9 @@ function sanitizeBlock(block: CardBlock): MobileCardBlock {
     id: block.id,
     type: block.type,
     ...(block.label !== undefined ? { label: sanitizeText(block.label) } : {}),
+    ...(block.summary !== undefined ? { summary: sanitizeText(block.summary) } : {}),
+    ...(block.collapsible !== undefined ? { collapsible: block.collapsible } : {}),
+    ...(block.defaultOpen !== undefined ? { defaultOpen: block.defaultOpen } : {}),
     ...(block.title !== undefined ? { title: sanitizeText(block.title) } : {}),
     ...(block.text !== undefined ? { text: sanitizeText(block.text) } : {}),
     ...(block.value !== undefined ? { value: sanitizeText(block.value) } : {}),
@@ -357,7 +360,7 @@ export function sanitizeText(value: string): string {
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b/gi, "Bearer [REDACTED SECRET]")
     .replace(/\b(?:sk|rk|pk)-[A-Za-z0-9_-]{12,}\b/g, "[REDACTED SECRET]")
     .replace(/\b(?:api[_ -]?key|access[_ -]?token|password|secret)\s*[:=]\s*\S+/gi, "[REDACTED SECRET]")
-    .replace(/\[([^\]]+)\]\(\/api\/artifacts\/[^)]+\)/g, "$1 (available on Mac)")
+    .replace(/\[([^\]]+)\]\(\/(?:api\/artifacts|review-artifacts)\/[^)]+\)/g, "$1 (available on Mac)")
     .replace(/file:\/\/\S+/g, "[local file available on Mac]")
     .replace(/\/Users\/[^/\s]+/g, "/Users/[REDACTED]")
     .replaceAll(String.fromCharCode(0), "");
@@ -365,7 +368,7 @@ export function sanitizeText(value: string): string {
 
 function sanitizeHref(value?: string): { href?: string; availability?: "external" | "mac_only" } {
   if (!value) return {};
-  if (value.startsWith("/api/artifacts/") || value.startsWith("file:") || value.startsWith("/")) {
+  if (value.startsWith("/api/artifacts/") || value.startsWith("/review-artifacts/") || value.startsWith("file:") || value.startsWith("/")) {
     return { availability: "mac_only" };
   }
   try {

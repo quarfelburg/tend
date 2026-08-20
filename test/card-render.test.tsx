@@ -39,6 +39,155 @@ test("renders structured evidence hrefs as clickable anchors", () => {
   expect(html).toContain(">Signed agreement</a>");
 });
 
+test("renders collapsible card blocks closed unless defaultOpen is set", () => {
+  const card: Card = {
+    id: "collapsible-detail",
+    feedId: "company-attention",
+    kind: "attention",
+    status: "to_review_new",
+    title: "Review loose end",
+    eyebrow: "Loose ends",
+    why: "The card should keep long detail behind expanders.",
+    blocks: [
+      { id: "next", type: "memo", label: "Next", text: "Review this one task and choose the next move." },
+      { id: "analysis", type: "memo", label: "1-3-1", summary: "1-3-1 decision view", collapsible: true, text: "Problem, options, tradeoffs, and recommendation." },
+      { id: "open-detail", type: "memo", label: "Open detail", collapsible: true, defaultOpen: true, text: "This starts expanded." },
+    ],
+    readyForPass: 1,
+    createdAt: "2026-08-15T12:00:00.000Z",
+    updatedAt: "2026-08-15T12:00:00.000Z",
+    history: [],
+  };
+
+  const html = renderToStaticMarkup(
+    <CardView
+      card={card}
+      active={false}
+      onActivate={() => {}}
+      onChanged={() => {}}
+      onAction={() => {}}
+      onReturnToReview={() => {}}
+    />,
+  );
+
+  expect(html).toContain("<summary");
+  expect(html).toContain("1-3-1 decision view");
+  expect(html).toContain('<details class="block-collapsible block-collapsible-memo">');
+  expect(html).toContain('<details class="block-collapsible block-collapsible-memo" open="">');
+});
+
+test("renders decision cards in review order with summarized history and an expanded recommended task", () => {
+  const card: Card = {
+    id: "decision-review-order",
+    feedId: "anti-adhd-loose-ends-review-surface-unfinished-codex-ses",
+    kind: "attention",
+    status: "to_review_updated",
+    title: "Choose the first live cycle",
+    eyebrow: "Needs Hayden decision",
+    why: "This evolving project needs a clear review sequence.",
+    blocks: [
+      { id: "sources", type: "evidence", label: "Sources", items: [
+        "Current project record",
+        { label: "Open HTML review", href: "/review-artifacts/cycle-review.html" },
+      ] },
+      { id: "risks", type: "memo", label: "Risks", collapsible: true, text: "The first cycle may be too broad." },
+      { id: "task", type: "memo", label: "Exact Codex task", summary: "Exact Codex task", collapsible: true, text: "Draft three bounded candidate cycles. Compare each cycle against the same evidence and stop for Hayden's choice. Do not change canonical files." },
+      { id: "decision", type: "memo", label: "1-3-1", summary: "1-3-1 decision view", collapsible: true, text: "Problem, options, hybrids, and recommendation." },
+      { id: "next", type: "memo", label: "Next", text: "Choose the first cycle to test." },
+    ],
+    proposedAction: { label: "Draft options", instruction: "Draft three bounded candidate cycles." },
+    readyForPass: 1,
+    createdAt: "2026-08-15T12:00:00.000Z",
+    updatedAt: "2026-08-20T12:00:00.000Z",
+    history: [
+      {
+        at: "2026-08-18T11:00:00.000Z",
+        type: "codex.completed",
+        detail: "Older cycle set that should stay behind the full-history expander.",
+      },
+      {
+        at: "2026-08-20T10:45:00.000Z",
+        type: "user.instruction",
+        detail: "Draft the latest three bounded cycles and stop for my choice.",
+      },
+      {
+        at: "2026-08-20T11:00:00.000Z",
+        type: "codex.completed",
+        detail: "Three candidate first live cycles were drafted: 1. Fact: Dense implementation detail that belongs behind the expander. Decision: Choose the first cycle. Recommendation: Start with the evidence recovery cycle. Hayden choice required: 1, 2, or 3.",
+      },
+    ],
+  };
+
+  const html = renderToStaticMarkup(
+    <CardView
+      card={card}
+      active={false}
+      onActivate={() => {}}
+      onChanged={() => {}}
+      onAction={() => {}}
+      onReturnToReview={() => {}}
+    />,
+  );
+
+  expect(html).toContain("Three candidate first live cycles were drafted. Recommendation: Start with the evidence recovery cycle.");
+  expect(html).toContain("Draft the latest three bounded cycles and stop for my choice.");
+  expect(html).not.toContain("Older cycle set that should stay behind the full-history expander.");
+  expect(html).toContain('<time dateTime="2026-08-20T10:45:00.000Z">');
+  expect(html).toContain('<time dateTime="2026-08-20T11:00:00.000Z">');
+  expect(html).not.toContain("Dense implementation detail that belongs behind the expander");
+  expect(html).not.toContain("Exact Codex task");
+  expect(html).toContain("Recommended Codex task");
+  expect(html).toContain('<details class="block-collapsible block-collapsible-memo" open="">');
+  expect(html).toContain("Draft three bounded candidate cycles. Compare each cycle against the same evidence and stop for Hayden&#x27;s choice.");
+  expect(html).toContain("Choose the first cycle to test. Draft three bounded candidate cycles.");
+  expect(html).toContain('<a href="/review-artifacts/cycle-review.html"');
+  expect(html.match(/Open HTML review/g)?.length).toBe(2);
+
+  const historyIndex = html.indexOf("Card history summary");
+  const nextIndex = html.indexOf(">Next<");
+  const decisionIndex = html.indexOf("1-3-1 decision view");
+  const taskIndex = html.indexOf("Recommended Codex task");
+  const risksIndex = html.indexOf(">Risks<");
+  const sourcesIndex = html.indexOf(">Sources<");
+  const actionIndex = html.indexOf("Next thing");
+  expect(historyIndex).toBeGreaterThan(-1);
+  expect(historyIndex).toBeLessThan(nextIndex);
+  expect(nextIndex).toBeLessThan(decisionIndex);
+  expect(decisionIndex).toBeLessThan(taskIndex);
+  expect(taskIndex).toBeLessThan(risksIndex);
+  expect(risksIndex).toBeLessThan(sourcesIndex);
+  expect(sourcesIndex).toBeLessThan(actionIndex);
+});
+
+test("places OKR context before Next while preserving the Loose Ends review hierarchy", () => {
+  const card: Card = {
+    id: "personal-okr",
+    feedId: "personal-okrs",
+    kind: "attention",
+    status: "to_review_new",
+    title: "Review objective progress",
+    eyebrow: "Personal OKRs",
+    why: "The objective needs a current evidence decision.",
+    blocks: [
+      { id: "next", type: "memo", label: "Next", text: "Choose the next evidence pass." },
+      { id: "risks", type: "checklist", label: "Risks", items: ["Do not infer results."] },
+      { id: "okr-context", type: "memo", label: "Objective and key results", text: "Objective: Validate the result." },
+      { id: "codex-task", type: "memo", label: "Recommended Codex task", summary: "Reconcile the current evidence and propose the next decision.", text: "Reconcile evidence." },
+    ],
+    readyForPass: 1,
+    createdAt: "2026-08-20T12:00:00.000Z",
+    updatedAt: "2026-08-20T12:00:00.000Z",
+    history: [],
+  };
+  const html = renderToStaticMarkup(<CardView
+    card={card}
+    onChanged={() => {}}
+  />);
+
+  expect(html.indexOf("Objective and key results")).toBeLessThan(html.indexOf(">Next<"));
+  expect(html.indexOf(">Next<")).toBeLessThan(html.indexOf("Reconcile the current evidence"));
+});
+
 test("renders a visible lens receipt for a context-influenced card", () => {
   const card: Card = {
     id: "paywall-context",
@@ -183,4 +332,39 @@ test("keeps local dismissal alongside explicitly proposed source cleanup", () =>
 
   expect(html).toContain("Dismiss card");
   expect(html).toContain("Archive");
+});
+
+test("shows explicit loose-end heartbeat controls without changing Dismiss card", () => {
+  const card: Card = {
+    id: "loose-end",
+    feedId: "anti-adhd-loose-ends-review-surface-unfinished-codex-ses",
+    kind: "attention",
+    status: "to_review_new",
+    title: "Unfinished contract review",
+    eyebrow: "Loose ends",
+    why: "This still needs a decision.",
+    blocks: [{ id: "next", type: "memo", text: "Review the open decision." }],
+    readyForPass: 1,
+    createdAt: "2026-08-15T12:00:00.000Z",
+    updatedAt: "2026-08-15T12:00:00.000Z",
+    history: [],
+  };
+
+  const html = renderToStaticMarkup(
+    <CardView
+      card={card}
+      active={false}
+      onActivate={() => {}}
+      onChanged={() => {}}
+      onAction={() => {}}
+      onHeartbeatDisposition={() => {}}
+      onReturnToReview={() => {}}
+    />,
+  );
+
+  expect(html).toContain("Dismiss card");
+  expect(html).toContain("Mark finished");
+  expect(html).toContain(">Close<");
+  expect(html).toContain("Park until");
+  expect(html).not.toContain("Park card");
 });

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { artifactType } from "../artifacts";
 import { parseOptionalWorkAgent } from "../../shared/lanes";
 import type { PostActionCompletion, VoiceTarget } from "../../shared/types";
 import { mindContextPublicationReceipt } from "../domain";
@@ -37,23 +38,26 @@ export function apiRoutes(context: LocalRouteContext): Hono {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 404);
     }
   });
-  app.get("/api/artifacts/:name", async (c) => {
+  const serveArtifact = async (c: any) => {
     const name = c.req.param("name");
-    const artifactTypes: Record<string, { directory: string; contentType: string }> = {
-      ".jpeg": { directory: "artifacts", contentType: "image/jpeg" },
-      ".jpg": { directory: "artifacts", contentType: "image/jpeg" },
-      ".pdf": { directory: "pdf", contentType: "application/pdf" },
-      ".png": { directory: "artifacts", contentType: "image/png" },
-    };
-    const artifactType = artifactTypes[path.extname(name).toLowerCase()];
-    if (path.basename(name) !== name || !artifactType) return c.text("Artifact not found.", 404);
+    const type = artifactType(name);
+    if (path.basename(name) !== name || !type) return c.text("Artifact not found.", 404);
     try {
-      const contents = await readFile(path.join(artifactsDir, artifactType.directory, name));
-      return c.body(contents, 200, { "content-type": artifactType.contentType, "content-disposition": `inline; filename="${name}"` });
+      const contents = await readFile(path.join(artifactsDir, type.directory, name));
+      const headers: Record<string, string> = {
+        "content-type": type.contentType,
+        "content-disposition": `inline; filename="${name}"`,
+      };
+      if (path.extname(name).toLowerCase() === ".html") {
+        headers["content-security-policy"] = "sandbox; default-src 'self' data: https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: https:; font-src 'self' data: https:";
+      }
+      return c.body(contents, 200, headers);
     } catch {
       return c.text("Artifact not found.", 404);
     }
-  });
+  };
+  app.get("/api/artifacts/:name", serveArtifact);
+  app.get("/review-artifacts/:name", serveArtifact);
   app.get("/api/feeds/:feed/how", async (c) => c.json(await domain.inspectHowFeedWorks(c.req.param("feed"))));
   app.get("/api/global-prompts", async (c) => c.json(await domain.inspectGlobalPromptWorkspace()));
 
@@ -134,6 +138,12 @@ export function apiRoutes(context: LocalRouteContext): Hono {
   app.post("/api/feeds/:feed/cards/:card/actions/:action", async (c) => mutation(c, notify, async () => domain.runCardAction(c.req.param("feed"), c.req.param("card"), c.req.param("action"))));
   app.post("/api/feeds/:feed/cards/:card/approve", async (c) => mutation(c, notify, async () => domain.approveAction(c.req.param("feed"), c.req.param("card"))));
   app.post("/api/feeds/:feed/cards/:card/dismiss", async (c) => mutation(c, notify, async () => domain.dismissCard(c.req.param("feed"), c.req.param("card"))));
+  app.post("/api/feeds/:feed/cards/:card/heartbeat-disposition", async (c) => mutation(c, notify, async () => {
+    const input = await body(c);
+    const disposition = String(input.disposition ?? "");
+    if (disposition !== "finished" && disposition !== "closed" && disposition !== "parked") throw new Error("Invalid heartbeat disposition.");
+    return domain.setHeartbeatCardDisposition(c.req.param("feed"), c.req.param("card"), disposition, input.parkedUntil ? String(input.parkedUntil) : undefined);
+  }));
   app.post("/api/feeds/:feed/cards/:card/cleanup-source", async (c) => mutation(c, notify, async () => domain.queueSourceCleanup(c.req.param("feed"), c.req.param("card"))));
   app.post("/api/feeds/:feed/cards/:card/undo-cleanup-source", async (c) => mutation(c, notify, async () => domain.undoSourceCleanup(c.req.param("feed"), c.req.param("card"))));
   app.post("/api/feeds/:feed/cards/:card/return-to-review", async (c) => mutation(c, notify, async () => domain.returnCardToReview(c.req.param("feed"), c.req.param("card"))));

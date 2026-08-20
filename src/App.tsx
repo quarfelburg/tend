@@ -350,6 +350,10 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
     () => post(`/api/feeds/${card.feedId}/cards/${card.id}/return-to-review`),
     card.status === "queued" ? "Moved back to review" : "Ready for review again",
   );
+  const setHeartbeatDisposition = (card: Card, disposition: "finished" | "closed" | "parked", parkedUntil?: string) => void withRefresh(
+    () => post(`/api/feeds/${card.feedId}/cards/${card.id}/heartbeat-disposition`, { disposition, parkedUntil }),
+    disposition === "finished" ? "Marked finished" : disposition === "closed" ? "Card closed" : `Parked until ${parkedUntil}`,
+  );
   const undoCardDispositionAction = (target: CardDispositionUndo) => void (async () => {
     try {
       await post(cardDispositionUndoPath(target.kind, target));
@@ -442,7 +446,7 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
         {cards.map((card, index) => (
           <Fragment key={card.id}>
             {tab === "review" && index === updated.length && fresh.length > 0 && <div className="section-label" key={`${card.id}-label`}>New <span>{fresh.length}</span></div>}
-            <CardView key={card.id} card={card} queuedFor={cardQueuedFor(card.id)} queuedNote={editableQueuedNote(card)} active={card.id === activeCard?.id} onActivate={() => setActiveCardId(card.id)} onChanged={() => void refresh()} onAction={(action) => runCardAction(card, action)} onReturnToReview={() => returnToReview(card)} />
+            <CardView key={card.id} card={card} queuedFor={cardQueuedFor(card.id)} queuedNote={editableQueuedNote(card)} active={card.id === activeCard?.id} onActivate={() => setActiveCardId(card.id)} onChanged={() => void refresh()} onAction={(action) => runCardAction(card, action)} onHeartbeatDisposition={(disposition, parkedUntil) => setHeartbeatDisposition(card, disposition, parkedUntil)} onReturnToReview={() => returnToReview(card)} />
           </Fragment>
         ))}
         {feedWork.map((work) => (

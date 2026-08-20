@@ -101,7 +101,7 @@ export interface MobileCardProjection {
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
-  completionDisposition?: "completed" | "dismissed";
+  completionDisposition?: "completed" | "dismissed" | "finished" | "closed" | "parked";
 }
 
 export interface MobileFeedProjection {

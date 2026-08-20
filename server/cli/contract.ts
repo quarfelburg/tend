@@ -20,6 +20,7 @@ export const CLI_COMMANDS = [
   "sweep:rejudge --feed <id> --feedback <id> --ordered-cards <json-array> --removed-cards <json-array>",
   "source:import-json-file --feed <id> --source <id> --path <local-json-file>",
   "source:import-file --feed <id> --source <id> --path <local-text-or-jsonl-file>",
+  "artifact:import-file --path <local-html-pdf-or-image-file>",
   "card:upsert --feed <id> (--card <json> | --card-file <path>)",
   "routine:upsert --feed <id> --group <json>",
   "routine:approve --feed <id> --group <id>",

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { AttentionDomain } from "../server/domain";
@@ -40,6 +40,20 @@ afterEach(async () => {
 });
 
 describe("API routing and mutation hardening", () => {
+  test("serves imported HTML review artifacts with a sandbox policy", async () => {
+    const { app } = await setup();
+    const root = roots.at(-1)!;
+    await mkdir(path.join(root, "html"), { recursive: true });
+    await writeFile(path.join(root, "html", "review.html"), "<!doctype html><title>Review</title>");
+
+    const response = await app.request("/review-artifacts/review.html");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    expect(response.headers.get("content-security-policy")).toContain("sandbox");
+    expect(await response.text()).toContain("<title>Review</title>");
+  });
+
   test("rejects foreign Origin mutations and allows no-Origin CLI-style mutations", async () => {
     const { app } = await setup();
 

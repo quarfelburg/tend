@@ -5,3 +5,14 @@ data/
 .wrangler/
 *.log
 .DS_Store
+
+# Machine-local Tend state and generated operator data
+.attention*/
+tmp/
+local-services/
+*.bun-build
+
+# Local credentials and environment overrides
+.env
+.env.*
+!.env.example

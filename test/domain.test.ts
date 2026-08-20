@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { AttentionDomain } from "../server/domain";
+import { AttentionDomain, validateAntiAdhdReviewCompletion } from "../server/domain";
 import { drainPrompt } from "../server/dispatcher";
 import { formatWorkClaimOutput, formatWorkListOutput } from "../server/operator";
 import { FileCardRepository, MirroredCardRepository, type CardRepository } from "../server/repositories/cards";
@@ -84,6 +84,94 @@ async function enableSourceCleanup(store: AttentionStore, feedId: string, cardId
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+describe("Loose Ends returned-review contract", () => {
+  const feedId = "anti-adhd-loose-ends-review-surface-unfinished-codex-ses";
+  const work = { kind: "scoped_instruction" as const, instruction: "Build the execution board." };
+  const currentBlocks = [
+    { id: "next", type: "memo" as const, label: "Next", text: "Confirm the owner and delivery gate." },
+    { id: "codex-task", type: "memo" as const, label: "Recommended Codex task", text: "After Hayden confirms those details, finalize the dated board." },
+    { id: "sources", type: "evidence" as const, label: "Sources", items: [{ label: "Open execution board", href: "/review-artifacts/board.html" }] },
+  ];
+  const currentActions = [{ id: "finalize-board", label: "Finalize board", behavior: "queue_instruction" as const, instruction: "Use Hayden's confirmed details to finalize the board." }];
+
+  test("requires refreshed decision blocks and actions", () => {
+    expect(() => validateAntiAdhdReviewCompletion(feedId, work, { response: "Finished the requested work." })).toThrow("refreshed card blocks");
+    expect(() => validateAntiAdhdReviewCompletion(feedId, work, { response: "Finished the requested work.", blocks: currentBlocks })).toThrow("refreshed decision actions");
+  });
+
+  test("rejects a completed instruction returned as future work", () => {
+    const staleBlocks = currentBlocks.map((block) => block.id === "codex-task" ? { ...block, text: work.instruction } : block);
+    expect(() => validateAntiAdhdReviewCompletion(feedId, work, { response: "Finished.", blocks: staleBlocks, actions: currentActions })).toThrow("cannot return a completed instruction");
+  });
+
+  test("requires a review link when the receipt says an artifact was created", () => {
+    const unlinkedBlocks = currentBlocks.map((block) => block.id === "sources" ? { ...block, items: ["Execution board draft"] } : block);
+    expect(() => validateAntiAdhdReviewCompletion(feedId, work, {
+      response: "Created a new WIP execution-board draft.",
+      blocks: unlinkedBlocks,
+      actions: currentActions,
+    })).toThrow("no linked evidence item");
+  });
+
+  test("accepts a current decision surface with linked artifacts", () => {
+    expect(() => validateAntiAdhdReviewCompletion(feedId, work, {
+      response: "Created a new WIP execution-board draft and linked it for review.",
+      blocks: currentBlocks,
+      actions: currentActions,
+    })).not.toThrow();
+  });
+});
+
+describe("Personal OKR and Loose Ends ownership boundary", () => {
+  test("rejects the same active queued instruction across both feeds", async () => {
+    const { domain } = await setup();
+    const looseEnds = await domain.createFeedFromBrief("Loose Ends duplicate test", null);
+    const personalOkrs = await domain.createFeedFromBrief("Personal OKRs", null);
+
+    // The production Loose Ends id is stable; use its actual id in this isolated store.
+    await domain.createFeedFromBrief("anti adhd loose ends review surface unfinished codex ses", null);
+    await domain.upsertCard("anti-adhd-loose-ends-review-surface-unfinished-codex-ses", {
+      id: "artifact-execution",
+      title: "Finish the launch board",
+      why: "The artifact is incomplete.",
+      blocks: [{ id: "next", type: "memo", text: "Finish it." }],
+      actions: [{ id: "finish-board", label: "Finish board", behavior: "queue_instruction", instruction: "Finish the named launch board and return it for review." }],
+    });
+
+    expect(looseEnds.id).toBe("loose-ends-duplicate-test");
+    expect(personalOkrs.id).toBe("personal-okrs");
+    await expect(domain.upsertCard("personal-okrs", {
+      id: "objective-one",
+      title: "Review objective progress",
+      why: "The KR needs evidence.",
+      blocks: [{ id: "okr-context", type: "memo", text: "Objective and KRs." }],
+      actions: [{ id: "duplicate-board", label: "Finish board", behavior: "queue_instruction", instruction: "Finish the named launch board and return it for review." }],
+    })).rejects.toThrow("cannot own the same active task");
+  });
+
+  test("allows distinct OKR evidence reconciliation and Loose Ends execution", async () => {
+    const { domain } = await setup();
+    await domain.createFeedFromBrief("Personal OKRs", null);
+    await domain.createFeedFromBrief("anti adhd loose ends review surface unfinished codex ses", null);
+    await domain.upsertCard("anti-adhd-loose-ends-review-surface-unfinished-codex-ses", {
+      id: "artifact-execution",
+      title: "Finish the launch board",
+      why: "The artifact is incomplete.",
+      blocks: [{ id: "next", type: "memo", text: "Finish it." }],
+      actions: [{ id: "finish-board", label: "Finish board", behavior: "queue_instruction", instruction: "Finish the named launch board and return it for review." }],
+    });
+
+    const card = await domain.upsertCard("personal-okrs", {
+      id: "objective-one",
+      title: "Review objective progress",
+      why: "The KR needs evidence.",
+      blocks: [{ id: "okr-context", type: "memo", text: "Objective and KRs." }],
+      actions: [{ id: "reconcile-evidence", label: "Reconcile evidence", behavior: "queue_instruction", instruction: "Reconcile source-backed KR evidence and propose the objective status." }],
+    });
+    expect(card.actions?.[0]?.id).toBe("reconcile-evidence");
+  });
 });
 
 describe("feed thread operator handshake", () => {
@@ -2503,6 +2591,59 @@ describe("local card dismissal (Tend-only, no source cleanup)", () => {
     expect(card.completedAt).toBeUndefined();
     expect(card.completionDisposition).toBeUndefined();
     expect(card.history.map((entry) => entry.type)).toContain("user.returned_to_review");
+  });
+
+  test("anti-ADHD loose-end dispositions are explicit while local dismissal stays local", async () => {
+    const { store, domain } = await setup();
+    const feedId = "anti-adhd-loose-ends-review-surface-unfinished-codex-ses";
+    await store.createFeed({
+      id: feedId,
+      name: "Anti-ADHD loose ends review",
+      purpose: "Surface unfinished Codex sessions and project next steps as review cards.",
+      defaultCleanup: "Dismiss from local review only.",
+      currentPass: 1,
+      createdAt: "2026-08-15T12:00:00.000Z",
+      updatedAt: "2026-08-15T12:00:00.000Z",
+    });
+    for (const cardId of ["dismissed", "finished", "closed", "parked"]) {
+      await domain.upsertCard(feedId, {
+        id: cardId,
+        title: `${cardId} loose end`,
+        why: "This loose end needs an explicit heartbeat status.",
+        blocks: [
+          { id: "next", type: "memo", text: "Decide whether to keep tracking this." },
+          { id: "codex-task", type: "memo", text: "Stop after drafting the next safe step." },
+          { id: "risks", type: "checklist", items: ["Could keep nagging after Hayden closes it."] },
+          { id: "sources", type: "evidence", items: ["2026-08-15 heartbeat scan"] },
+        ],
+      });
+    }
+
+    await domain.dismissCard(feedId, "dismissed");
+    let memory = await store.readHeartbeatMemory(feedId, "anti-adhd-codex-session-heartbeat");
+    expect(memory.dispositions.dismissed).toBeUndefined();
+
+    await domain.setHeartbeatCardDisposition(feedId, "finished", "finished");
+    await domain.setHeartbeatCardDisposition(feedId, "closed", "closed");
+    await domain.setHeartbeatCardDisposition(feedId, "parked", "parked", "2026-09-15");
+
+    memory = await store.readHeartbeatMemory(feedId, "anti-adhd-codex-session-heartbeat");
+    expect(memory.automationId).toBe("anti-adhd-codex-session-heartbeat");
+    expect(memory.dispositions.finished).toMatchObject({ disposition: "finished", status: "suppressed" });
+    expect(memory.dispositions.closed).toMatchObject({ disposition: "closed", status: "suppressed" });
+    expect(memory.dispositions.parked).toMatchObject({
+      disposition: "parked",
+      status: "suppressed",
+      parkedUntil: "2026-09-15",
+      sources: ["2026-08-15 heartbeat scan"],
+      risks: ["Could keep nagging after Hayden closes it."],
+    });
+    expect(memory.dispositions.parked.contentFingerprint).toBeTruthy();
+
+    await domain.returnCardToReview(feedId, "parked");
+    const reopened = await store.readHeartbeatMemory(feedId, "anti-adhd-codex-session-heartbeat");
+    expect(reopened.dispositions.parked.status).toBe("reopened");
+    expect(reopened.dispositions.parked.reopenedAt).toBeTruthy();
   });
 
   test("explicit default cleanup still queues a verifiable connector work item, unchanged", async () => {

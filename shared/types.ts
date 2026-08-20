@@ -125,6 +125,9 @@ export interface CardBlock {
   id: string;
   type: BlockType;
   label?: string;
+  summary?: string;
+  collapsible?: boolean;
+  defaultOpen?: boolean;
   title?: string;
   text?: string;
   value?: string;
@@ -317,7 +320,7 @@ export interface Card {
   // How a card reached "done": "completed" via approved work/source cleanup, or "dismissed" via a
   // local-only dismissal that ran no source cleanup. Optional and absent on legacy/pre-existing
   // cards, which are treated as "completed".
-  completionDisposition?: "completed" | "dismissed";
+  completionDisposition?: "completed" | "dismissed" | "finished" | "closed" | "parked";
   routineActionGroupId?: string;
   history: Array<{ at: string; type: string; detail?: string }>;
   sweep?: {
@@ -325,6 +328,31 @@ export interface Card {
     hidden: boolean;
     feedbackId: string;
   };
+}
+
+export type HeartbeatCardDispositionStatus = "suppressed" | "reopened";
+export type HeartbeatCardDispositionKind = "finished" | "closed" | "parked";
+
+export interface HeartbeatCardDisposition {
+  cardId: string;
+  title: string;
+  why: string;
+  disposition: HeartbeatCardDispositionKind;
+  status: HeartbeatCardDispositionStatus;
+  recordedAt: string;
+  updatedAt: string;
+  reopenedAt?: string;
+  parkedUntil?: string;
+  contentFingerprint: string;
+  sources: string[];
+  risks: string[];
+}
+
+export interface HeartbeatMemory {
+  automationId: string;
+  feedId: FeedId;
+  updatedAt: string;
+  dispositions: Record<string, HeartbeatCardDisposition>;
 }
 
 export interface RoutineActionItem {

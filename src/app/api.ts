@@ -8,8 +8,22 @@ let mutationTokenPromise: Promise<string> | null = null;
 
 export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
-  const value = await response.json();
-  if (!response.ok) throw new ApiError(value.error ?? `Request failed: ${response.status}`, response.status);
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  const raw = await response.text();
+  let value: Record<string, unknown> | unknown = raw;
+  if (contentType.includes("application/json") && raw) {
+    try {
+      value = JSON.parse(raw) as unknown;
+    } catch {
+      throw new ApiError(`The local API returned invalid JSON (${response.status}).`, response.status);
+    }
+  }
+  if (!response.ok) {
+    const message = value && typeof value === "object" && "error" in value
+      ? String((value as { error: unknown }).error)
+      : raw.trim() || `Request failed: ${response.status}`;
+    throw new ApiError(message, response.status);
+  }
   return value as T;
 }
 

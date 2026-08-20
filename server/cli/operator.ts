@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { importArtifactFile } from "../artifacts";
 import { AttentionDomain, isClaimedWorkItem, mindContextPublicationReceipt } from "../domain";
 import { formatWorkClaimOutput, formatWorkListOutput } from "../operator";
 import { parseAgentPresence, parseWorkAgent } from "../../shared/lanes";
@@ -187,6 +188,9 @@ export async function runOperatorCli(rawArgs: string[]): Promise<void> {
         );
         break;
       }
+      case "artifact:import-file":
+        output = await importArtifactFile(resolveArtifactsDir(root), required("path"));
+        break;
       case "card:upsert":
         output = await domain.upsertCard(
           required("feed"),

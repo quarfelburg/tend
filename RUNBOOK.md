@@ -237,6 +237,22 @@ tend cli source:import-json-file --feed <feed-id> --source <source-id> --path <l
 
 Use `source:import-file` for local text or JSONL artifacts.
 
+When completed work creates an HTML review companion, make it reviewable from the card:
+
+```bash
+tend cli artifact:import-file --path <local-html-file>
+```
+
+Use the returned `href` in a structured Sources evidence item labeled `Open HTML review`, and put
+the same Markdown link in the first two sentences of the `work:complete` response. Do not merely
+say that a review companion exists.
+
+Loose Ends work that returns a card to review must submit refreshed `blocks` and `actions` in the
+`work:complete` result. The refreshed card must put Hayden's current decision in Next, describe only
+post-decision work in Recommended Codex task, and remove the completed instruction from future
+actions. When the receipt says a board, brief, packet, companion, HTML, PDF, deck, document, or file
+was created, Sources must include an imported review link. Tend rejects the completion otherwise.
+
 Commit a judged card with structured blocks through a file-backed payload. Do not interpolate
 structured card JSON into the shell: card prose can contain backticks, dollar signs, and other
 shell-significant text.

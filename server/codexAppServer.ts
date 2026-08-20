@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 declare const Bun: {
+  which(binary: string): string | null;
   spawn(command: string[], options?: Record<string, unknown>): {
     exited: Promise<number>;
     kill(signal?: number): void;
@@ -32,8 +33,10 @@ interface Pending {
 
 export function appServerArgv(controlSocket: string | null | undefined): string[] {
   const socket = controlSocket === null ? null : controlSocket ?? DEFAULT_CONTROL_SOCKET;
-  if (socket && existsSync(socket)) return ["codex", "app-server", "proxy", "--sock", socket];
-  return ["codex", "app-server"];
+  const codex = Bun.which("codex") ?? "codex";
+  const command = ["/usr/bin/env", codex, "app-server"];
+  if (socket && existsSync(socket)) return [...command, "proxy", "--sock", socket];
+  return command;
 }
 
 export async function runAppServerDrain(options: AppServerDrainOptions): Promise<number> {

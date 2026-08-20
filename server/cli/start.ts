@@ -20,6 +20,7 @@ API: ${apiUrl()}
 Data: ${attentionDataDir()}
 `);
   await import("../../server");
+  await new Promise<void>(() => {});
 }
 
 function defaultClientDir(): string {

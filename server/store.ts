@@ -12,6 +12,8 @@ import type {
   FeedConfig,
   FeedEvent,
   FeedView,
+  HeartbeatCardDisposition,
+  HeartbeatMemory,
   MindContextBinding,
   MindContextUpdate,
   PolicyRevision,
@@ -474,6 +476,50 @@ export class AttentionStore {
   async writeCard(card: Card): Promise<void> {
     card.updatedAt = isoNow();
     await this.cards.write(card);
+  }
+
+  async readHeartbeatMemory(feedId: string, automationId = feedId): Promise<HeartbeatMemory> {
+    const memoryPath = this.feedPath(feedId, "heartbeat-memory.json");
+    try {
+      return await readJson<HeartbeatMemory>(memoryPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      return {
+        automationId,
+        feedId,
+        updatedAt: isoNow(),
+        dispositions: {},
+      };
+    }
+  }
+
+  async writeHeartbeatMemory(memory: HeartbeatMemory): Promise<void> {
+    memory.updatedAt = isoNow();
+    await writeJson(this.feedPath(memory.feedId, "heartbeat-memory.json"), memory);
+  }
+
+  async recordHeartbeatCardDisposition(feedId: string, disposition: HeartbeatCardDisposition, automationId = feedId): Promise<HeartbeatMemory> {
+    const memory = await this.readHeartbeatMemory(feedId, automationId);
+    memory.automationId = automationId;
+    memory.dispositions[disposition.cardId] = disposition;
+    await this.writeHeartbeatMemory(memory);
+    return memory;
+  }
+
+  async reopenHeartbeatCardDisposition(feedId: string, cardId: string, automationId = feedId): Promise<HeartbeatMemory | null> {
+    const memory = await this.readHeartbeatMemory(feedId, automationId);
+    const existing = memory.dispositions[cardId];
+    if (!existing) return null;
+    const now = isoNow();
+    memory.automationId = automationId;
+    memory.dispositions[cardId] = {
+      ...existing,
+      status: "reopened",
+      reopenedAt: now,
+      updatedAt: now,
+    };
+    await this.writeHeartbeatMemory(memory);
+    return memory;
   }
 
   async removeCard(feedId: string, cardId: string): Promise<void> {

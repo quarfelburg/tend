@@ -13,7 +13,7 @@ import { MobileSyncWorker } from "./server/mobile/sync";
 import { makeToken } from "./server/util";
 
 declare const Bun: {
-  serve(options: { port: number; hostname: string; idleTimeout: number; fetch: (...args: any[]) => any }): { stop(force?: boolean): void };
+  serve(options: { port: number; hostname: string; idleTimeout: number; fetch: (...args: any[]) => any }): { ref(): void; stop(force?: boolean): void };
 };
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -59,6 +59,8 @@ const server = Bun.serve({
   idleTimeout: 255,
   fetch: app.fetch,
 });
+server.ref();
+(globalThis as typeof globalThis & { __tendServer?: typeof server }).__tendServer = server;
 
 console.log(`Tend API listening on http://127.0.0.1:${port}`);
 
@@ -67,4 +69,5 @@ export function closeServer() {
   drainDispatcher.stop();
   feedEventBridge.stop();
   server.stop(true);
+  delete (globalThis as typeof globalThis & { __tendServer?: typeof server }).__tendServer;
 }
