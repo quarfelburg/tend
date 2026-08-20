@@ -57,6 +57,12 @@ function appendHistory(card: Card, type: string, detail?: string): void {
 const ANTI_ADHD_HEARTBEAT_FEED_ID = "anti-adhd-loose-ends-review-surface-unfinished-codex-ses";
 const ANTI_ADHD_HEARTBEAT_AUTOMATION_ID = "anti-adhd-codex-session-heartbeat";
 const PERSONAL_OKRS_FEED_ID = "personal-okrs";
+const ACTIVE_PROJECTS_FEED_ID = "active-projects";
+const MUTUALLY_EXCLUSIVE_WORK_FEED_IDS = new Set([
+  ANTI_ADHD_HEARTBEAT_FEED_ID,
+  PERSONAL_OKRS_FEED_ID,
+  ACTIVE_PROJECTS_FEED_ID,
+]);
 
 function plainCardItems(card: Card, blockId: string): string[] {
   const block = card.blocks.find((item) => item.id === blockId);
@@ -2679,7 +2685,7 @@ export class AttentionDomain {
     safeIdentifier(input.id, "Card id");
     validateCardBlocks(input.blocks);
     validateCardActions(input.actions);
-    await this.validatePersonalOkrTaskOwnership(feedId, input.actions);
+    await this.validateManagedFeedTaskOwnership(feedId, input.actions);
     const sourceRunIds = validateSourceRunIds(input.sourceRunIds);
     return this.store.serialize(async () => {
       const config = await this.store.readConfig(feedId);
@@ -2716,29 +2722,28 @@ export class AttentionDomain {
     });
   }
 
-  private async validatePersonalOkrTaskOwnership(feedId: string, actions: CardAction[] | undefined): Promise<void> {
-    const counterpartFeedId = feedId === PERSONAL_OKRS_FEED_ID
-      ? ANTI_ADHD_HEARTBEAT_FEED_ID
-      : feedId === ANTI_ADHD_HEARTBEAT_FEED_ID
-        ? PERSONAL_OKRS_FEED_ID
-        : null;
-    if (!counterpartFeedId || !actions?.length) return;
+  private async validateManagedFeedTaskOwnership(feedId: string, actions: CardAction[] | undefined): Promise<void> {
+    if (!MUTUALLY_EXCLUSIVE_WORK_FEED_IDS.has(feedId) || !actions?.length) return;
 
     const incomingTasks = new Set(actions
       .filter((action) => action.behavior === "queue_instruction" || action.behavior === "approve_action")
       .map((action) => normalizedOwnedTask(action.instruction))
       .filter(Boolean));
-    if (!incomingTasks.size || !(await this.store.listFeedIds()).includes(counterpartFeedId)) return;
+    if (!incomingTasks.size) return;
 
     const activeStatuses = new Set<Card["status"]>(["to_review_new", "to_review_updated", "queued", "working", "approved_blocked"]);
-    const counterpartCards = await this.store.listCards(counterpartFeedId);
-    const duplicate = counterpartCards
-      .filter((card) => activeStatuses.has(card.status))
-      .flatMap((card) => card.actions ?? [])
-      .map((action) => normalizedOwnedTask(action.instruction))
-      .find((instruction) => instruction && incomingTasks.has(instruction));
-    if (duplicate) {
-      throw new Error("Personal OKRs and Loose Ends cannot own the same active task. Keep execution in Loose Ends and use the OKR card for progress evidence, status, or the next OKR-level decision.");
+    const liveFeedIds = new Set(await this.store.listFeedIds());
+    for (const counterpartFeedId of MUTUALLY_EXCLUSIVE_WORK_FEED_IDS) {
+      if (counterpartFeedId === feedId || !liveFeedIds.has(counterpartFeedId)) continue;
+      const counterpartCards = await this.store.listCards(counterpartFeedId);
+      const duplicate = counterpartCards
+        .filter((card) => activeStatuses.has(card.status))
+        .flatMap((card) => card.actions ?? [])
+        .map((action) => normalizedOwnedTask(action.instruction))
+        .find((instruction) => instruction && incomingTasks.has(instruction));
+      if (duplicate) {
+        throw new Error("Active Projects, Personal OKRs, and Loose Ends cannot own the same active task. Keep project management in Active Projects, OKR evidence and status in Personal OKRs, and unfinished artifact execution in Loose Ends.");
+      }
     }
   }
 

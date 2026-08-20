@@ -179,7 +179,7 @@ function displayBlock(block: CardBlock): CardBlock {
 
 function blockOrder(block: CardBlock): number {
   const label = normalizedBlockLabel(block);
-  if (label === "objective and key results" || block.id === "okr-context") return 5;
+  if (label === "objective and key results" || block.id === "okr-context" || label === "project" || block.id === "project-context") return 5;
   if (label === "next" || label.startsWith("next ")) return 10;
   if (label.includes("1-3-1")) return 20;
   if (isRecommendedTaskBlock(block)) return 30;

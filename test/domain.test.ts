@@ -124,8 +124,8 @@ describe("Loose Ends returned-review contract", () => {
   });
 });
 
-describe("Personal OKR and Loose Ends ownership boundary", () => {
-  test("rejects the same active queued instruction across both feeds", async () => {
+describe("Active Projects, Personal OKRs, and Loose Ends ownership boundary", () => {
+  test("rejects the same active queued instruction across Personal OKRs and Loose Ends", async () => {
     const { domain } = await setup();
     const looseEnds = await domain.createFeedFromBrief("Loose Ends duplicate test", null);
     const personalOkrs = await domain.createFeedFromBrief("Personal OKRs", null);
@@ -148,6 +148,45 @@ describe("Personal OKR and Loose Ends ownership boundary", () => {
       why: "The KR needs evidence.",
       blocks: [{ id: "okr-context", type: "memo", text: "Objective and KRs." }],
       actions: [{ id: "duplicate-board", label: "Finish board", behavior: "queue_instruction", instruction: "Finish the named launch board and return it for review." }],
+    })).rejects.toThrow("cannot own the same active task");
+  });
+
+  test("rejects the same active queued instruction across Active Projects and either neighboring feed", async () => {
+    const { domain } = await setup();
+    await domain.createFeedFromBrief("Active Projects", null);
+    await domain.createFeedFromBrief("Personal OKRs", null);
+    await domain.createFeedFromBrief("anti adhd loose ends review surface unfinished codex ses", null);
+
+    await domain.upsertCard("personal-okrs", {
+      id: "objective-one",
+      title: "Review objective progress",
+      why: "The KR needs evidence.",
+      blocks: [{ id: "okr-context", type: "memo", text: "Objective and KRs." }],
+      actions: [{ id: "reconcile-evidence", label: "Reconcile evidence", behavior: "queue_instruction", instruction: "Reconcile the project evidence and propose the next status." }],
+    });
+
+    await expect(domain.upsertCard("active-projects", {
+      id: "project-one",
+      title: "Move the project forward",
+      why: "The project needs a next step.",
+      blocks: [{ id: "project-context", type: "memo", text: "Project status and next step." }],
+      actions: [{ id: "duplicate-evidence", label: "Reconcile evidence", behavior: "queue_instruction", instruction: "Reconcile the project evidence and propose the next status." }],
+    })).rejects.toThrow("cannot own the same active task");
+
+    await domain.upsertCard("anti-adhd-loose-ends-review-surface-unfinished-codex-ses", {
+      id: "artifact-execution",
+      title: "Finish the project artifact",
+      why: "The artifact is incomplete.",
+      blocks: [{ id: "next", type: "memo", text: "Finish it." }],
+      actions: [{ id: "finish-artifact", label: "Finish artifact", behavior: "queue_instruction", instruction: "Finish the project artifact and return it for review." }],
+    });
+
+    await expect(domain.upsertCard("active-projects", {
+      id: "project-two",
+      title: "Move the second project forward",
+      why: "The project needs a next step.",
+      blocks: [{ id: "project-context", type: "memo", text: "Project status and next step." }],
+      actions: [{ id: "duplicate-artifact", label: "Finish artifact", behavior: "queue_instruction", instruction: "Finish the project artifact and return it for review." }],
     })).rejects.toThrow("cannot own the same active task");
   });
 

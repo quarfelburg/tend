@@ -188,6 +188,32 @@ test("places OKR context before Next while preserving the Loose Ends review hier
   expect(html.indexOf(">Next<")).toBeLessThan(html.indexOf("Reconcile the current evidence"));
 });
 
+test("places project context before Next while preserving the shared review hierarchy", () => {
+  const card: Card = {
+    id: "active-project",
+    feedId: "active-projects",
+    kind: "attention",
+    status: "to_review_new",
+    title: "Move the project forward",
+    eyebrow: "Active Projects",
+    why: "The project needs one current decision.",
+    blocks: [
+      { id: "next", type: "memo", label: "Next", text: "Choose the next project step." },
+      { id: "risks", type: "checklist", label: "Risks", items: ["Do not duplicate execution."] },
+      { id: "project-context", type: "memo", label: "Project", text: "Status: In progress\n\nNext step: Define the reusable operator boundary." },
+      { id: "codex-task", type: "memo", label: "Recommended Codex task", summary: "Draft the operator boundary and return the architecture choice.", text: "Draft the operator boundary." },
+    ],
+    readyForPass: 1,
+    createdAt: "2026-08-20T14:00:00.000Z",
+    updatedAt: "2026-08-20T14:00:00.000Z",
+    history: [],
+  };
+  const html = renderToStaticMarkup(<CardView card={card} onChanged={() => {}} />);
+
+  expect(html.indexOf(">Project<")).toBeLessThan(html.indexOf(">Next<"));
+  expect(html.indexOf(">Next<")).toBeLessThan(html.indexOf("Draft the operator boundary and return the architecture choice"));
+});
+
 test("renders a visible lens receipt for a context-influenced card", () => {
   const card: Card = {
     id: "paywall-context",
