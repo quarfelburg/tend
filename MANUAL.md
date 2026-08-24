@@ -73,6 +73,10 @@ Tend creates the local feed, its initial policy, and an onboarding card. The fee
 thread then proposes the smallest useful source recipe and heartbeat cadence for review before
 collecting.
 
+A feed may remain stored but hidden from normal desktop and mobile navigation. This keeps dormant
+or superseded feed evidence recoverable without cluttering the active workspace. Direct links keep
+working, and the feed can be made visible again by changing its configuration.
+
 ### Connect The Home Thread
 
 Create one fresh Codex Desktop thread for the feed:
@@ -371,6 +375,11 @@ three groups:
 - **Changed now** - material changes in the latest observation window
 - **Ongoing** - active threads that continue to shape attention
 - **Unresolved** - open questions or tensions
+
+The local-first fork keeps this feature out of standard feed navigation while no harness-neutral
+publisher is configured. Existing context receipts and direct `/mind` links remain readable so
+historical source trails do not break. A future publisher should run through the external scheduler
+and shared local state rather than depend on one interactive agent harness.
 
 One dedicated Chronicle Pulse thread publishes for the entire Tend workspace. This is separate from
 the one-thread-per-feed model.

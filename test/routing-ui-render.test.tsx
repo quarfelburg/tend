@@ -63,7 +63,7 @@ function workspace(active = feed(), overrides: Partial<WorkspaceView> = {}): Wor
 
 test("TopBar renders Claude presence liveness and label", () => {
   const html = renderToStaticMarkup(
-    <TopBar state={workspace()} onMind={() => {}} onFeed={() => {}} />,
+    <TopBar state={workspace()} onFeed={() => {}} />,
   );
 
   expect(html).toContain("Claude live · Preview");
@@ -72,7 +72,7 @@ test("TopBar renders Claude presence liveness and label", () => {
 
 test("TopBar links every feed to the configured ClarityBoard", () => {
   const html = renderToStaticMarkup(
-    <TopBar state={workspace(undefined, { links: [{ id: "clarityboard", label: "ClarityBoard", href: "/review-artifacts/clarityboard.html" }] })} onMind={() => {}} onFeed={() => {}} />,
+    <TopBar state={workspace(undefined, { links: [{ id: "clarityboard", label: "ClarityBoard", href: "/review-artifacts/clarityboard.html" }] })} onFeed={() => {}} />,
   );
 
   expect(html).toContain('href="/review-artifacts/clarityboard.html"');

@@ -30,7 +30,8 @@ const ACTIVE_WORK_STATUSES = new Set(["queued", "working", "approved_blocked"]);
 
 export async function projectMobileWorkspace(store: AttentionStore, now = new Date()): Promise<MobileWorkspaceSnapshot> {
   const feedIds = await store.listFeedIds();
-  const feeds = await Promise.all(feedIds.map((feedId) => store.readFeed(feedId)));
+  const allFeeds = await Promise.all(feedIds.map((feedId) => store.readFeed(feedId)));
+  const feeds = allFeeds.filter((feed) => !feed.config.hidden);
   const cards = feeds.flatMap((feed) => projectFeedItems(feed));
   const feedProjections = feeds.map((feed, position) => projectFeed(feed, cards, position));
   const mind = await projectMind(store, now);

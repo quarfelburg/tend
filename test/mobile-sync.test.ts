@@ -92,7 +92,7 @@ describe("mobile sync worker", () => {
     await worker.runOnce();
 
     expect(first.lastError).toBeUndefined();
-    expect(cloud.snapshots[0].feeds.map((feed) => feed.id)).toEqual(["inbox", "company-attention", "every"]);
+    expect(cloud.snapshots[0].feeds.map((feed) => feed.id)).toEqual(["inbox", "every"]);
     expect(cloud.completed).toEqual([{ id: SYNC_COMMAND_ID, state: "applied", workId: expect.any(String) }]);
     expect(cloud.progress).toEqual([
       expect.objectContaining({

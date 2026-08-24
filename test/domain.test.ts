@@ -451,14 +451,16 @@ describe("auto-drain prompt", () => {
 });
 
 describe("filesystem workspace", () => {
-  test("creates real Inbox and Company defaults with inspectable recipes and setup cards", async () => {
+  test("creates Inbox as the visible default while preserving the dormant Company recipe", async () => {
     const { root, store, domain } = await setup();
     const workspace = await store.readWorkspace();
-    expect(workspace.feeds.map((feed) => feed.id)).toEqual(["inbox", "company-attention"]);
+    expect(workspace.feeds.map((feed) => feed.id)).toEqual(["inbox"]);
     expect(workspace.active.sources[0].id).toBe("gmail-inbox");
     expect(workspace.active.cards[0].id).toBe("inbox-ready-to-collect");
     expect(workspace.dictation.status).toBe("not_checked");
     const company = await domain.inspectHowFeedWorks("company-attention");
+    expect((await store.readWorkspace("company-attention")).active.config.id).toBe("company-attention");
+    expect((await store.readConfig("company-attention")).hidden).toBe(true);
     expect((company.sources as Array<{ content: string }>)[0].content).toContain("Return no card rather than padding");
     const inbox = await domain.inspectHowFeedWorks("inbox");
     expect((inbox.sources as Array<{ content: string }>)[0].content).toContain("Default every reply draft to the owner of `sourceMailbox`");

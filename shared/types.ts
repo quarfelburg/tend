@@ -116,6 +116,7 @@ export interface FeedConfig {
   name: string;
   purpose: string;
   defaultCleanup: string;
+  hidden?: boolean;
   currentPass: number;
   createdAt: string;
   updatedAt: string;

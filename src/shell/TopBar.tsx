@@ -14,7 +14,7 @@ export function TopBar({
   state: WorkspaceView;
   title?: string;
   destination?: "feed" | "mind";
-  onMind: () => void;
+  onMind?: () => void;
   onFeed: (id: string) => void;
   onInspector?: (value: Inspector) => void;
   onWorkspace?: (tab?: WorkspaceTab) => void;
@@ -52,10 +52,12 @@ export function TopBar({
       </nav>}
       {open && (
         <div className="feed-menu">
-          <button className={destination === "mind" ? "selected" : ""} onClick={() => { onMind(); setOpen(false); }}>
-            <span>On Your Mind</span><small>Current signals and their source observations</small>
-          </button>
-          <div className="menu-rule" />
+          {onMind && <>
+            <button className={destination === "mind" ? "selected" : ""} onClick={() => { onMind(); setOpen(false); }}>
+              <span>On Your Mind</span><small>Current signals and their source observations</small>
+            </button>
+            <div className="menu-rule" />
+          </>}
           <div className="menu-title">Feeds</div>
           {state.feeds.map((feed) => (
             <button key={feed.id} className={destination === "feed" && feed.id === state.active.config.id ? "selected" : ""} onClick={() => { onFeed(feed.id); setOpen(false); }}>

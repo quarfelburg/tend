@@ -158,10 +158,10 @@ export class AttentionStore {
   async readWorkspace(feedId = "inbox"): Promise<WorkspaceView> {
     await this.init();
     const feedIds = await this.workspaceFeeds.listFeedIds();
-    const feeds = await Promise.all(feedIds.map(async (id) => {
-      const config = await this.readConfig(id);
-      return { id: config.id, name: config.name, purpose: config.purpose };
-    }));
+    const configs = await Promise.all(feedIds.map((id) => this.readConfig(id)));
+    const feeds = configs
+      .filter((config) => !config.hidden)
+      .map((config) => ({ id: config.id, name: config.name, purpose: config.purpose }));
     const selected = feedIds.includes(feedId) ? feedId : feedIds[0];
     return {
       feeds,
@@ -770,7 +770,7 @@ export class AttentionStore {
     const inbox = feedId === "inbox";
     const config = inbox
       ? feedConfig({ id: "inbox", name: "Inbox", purpose: "Turn email into a calm, actionable sweep with exact approval before any external send.", defaultCleanup: "Archive the email thread." })
-      : feedConfig({ id: "company-attention", name: "Company Attention", purpose: "Surface a small number of exceptional company signals with enough evidence to decide or act.", defaultCleanup: "Dismiss this card and suppress unchanged repeats." });
+      : { ...feedConfig({ id: "company-attention", name: "Company Attention", purpose: "Surface a small number of exceptional company signals with enough evidence to decide or act.", defaultCleanup: "Dismiss this card and suppress unchanged repeats." }), hidden: true };
     await writeJson(this.feedPath(feedId, "feed.json"), config);
     await writeText(this.feedPath(feedId, "feed.md"), `# ${config.name}\n\n${config.purpose}\n`);
     await this.textDocuments.write(`feeds/${feedId}/policy.md`, `# ${config.name} policy\n\n- Start with a high attention bar.\n- Preserve provenance and do not pad.\n`);

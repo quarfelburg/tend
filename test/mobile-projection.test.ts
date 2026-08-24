@@ -45,7 +45,7 @@ describe("mobile workspace projection", () => {
 
       const snapshot = await projectMobileWorkspace(runtime.store);
 
-      expect(snapshot.feeds.map((feed) => feed.id)).toEqual(["inbox", "company-attention", "every"]);
+      expect(snapshot.feeds.map((feed) => feed.id)).toEqual(["inbox", "every"]);
       expect(snapshot.cards.find((card) => card.key === "inbox:shared-id")?.title).toBe("Inbox version");
       expect(snapshot.cards.find((card) => card.key === "every:shared-id")?.title).toBe("Every version");
     } finally {
@@ -58,7 +58,7 @@ describe("mobile workspace projection", () => {
     await domain.createFeedFromBrief("Research Watch\nTrack useful research.", null);
 
     const created = await projectMobileWorkspace(store);
-    expect(created.feeds.map((feed) => feed.id)).toEqual(["inbox", "company-attention", "research-watch"]);
+    expect(created.feeds.map((feed) => feed.id)).toEqual(["inbox", "research-watch"]);
 
     const config = await store.readConfig("research-watch");
     await store.writeConfig({ ...config, name: "Ideas Watch" });
@@ -68,14 +68,10 @@ describe("mobile workspace projection", () => {
     expect(changed.feeds.map((feed) => `${feed.id}:${feed.name}`)).toEqual([
       "research-watch:Ideas Watch",
       "inbox:Inbox",
-      "company-attention:Company Attention",
     ]);
 
     await domain.archiveFeed("research-watch");
-    expect((await projectMobileWorkspace(store)).feeds.map((feed) => feed.id)).toEqual([
-      "inbox",
-      "company-attention",
-    ]);
+    expect((await projectMobileWorkspace(store)).feeds.map((feed) => feed.id)).toEqual(["inbox"]);
   });
 
   test("projects review ordering, routine groups, safe actions, and no work capabilities", async () => {
