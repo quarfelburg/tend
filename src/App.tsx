@@ -331,6 +331,15 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
       }
     })();
   };
+  const chatAboutCard = async (card: Card) => {
+    try {
+      const result = await post<{ codexUrl: string }>(`/api/feeds/${card.feedId}/cards/${card.id}/chat`);
+      showToast("Context added to the Codex task");
+      window.location.href = result.codexUrl;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  };
   const approveRoutineAction = (group: RoutineActionGroup) => {
     if (!feed) return;
     void (async () => {
@@ -446,7 +455,7 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
         {cards.map((card, index) => (
           <Fragment key={card.id}>
             {tab === "review" && index === updated.length && fresh.length > 0 && <div className="section-label" key={`${card.id}-label`}>New <span>{fresh.length}</span></div>}
-            <CardView key={card.id} card={card} queuedFor={cardQueuedFor(card.id)} queuedNote={editableQueuedNote(card)} active={card.id === activeCard?.id} onActivate={() => setActiveCardId(card.id)} onChanged={() => void refresh()} onAction={(action) => runCardAction(card, action)} onHeartbeatDisposition={(disposition, parkedUntil) => setHeartbeatDisposition(card, disposition, parkedUntil)} onReturnToReview={() => returnToReview(card)} />
+            <CardView key={card.id} card={card} queuedFor={cardQueuedFor(card.id)} queuedNote={editableQueuedNote(card)} active={card.id === activeCard?.id} onActivate={() => setActiveCardId(card.id)} onChanged={() => void refresh()} onAction={(action) => runCardAction(card, action)} onChat={() => chatAboutCard(card)} onHeartbeatDisposition={(disposition, parkedUntil) => setHeartbeatDisposition(card, disposition, parkedUntil)} onReturnToReview={() => returnToReview(card)} />
           </Fragment>
         ))}
         {feedWork.map((work) => (
@@ -501,15 +510,10 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
             )}
           </article>
         ))}
-        {!cards.length && !routineActions.length && !feedWork.length && <div className="empty"><h2>Nothing here right now.</h2><p>{tab === "review" ? "A quiet feed is allowed. Wake the feed thread when you want Codex to collect or drain pending work." : "Move back to To review when you are ready for the next pass."}</p></div>}
-        {(feed.readyNextPass > 0 || compoundProposals.length > 0) && <section className={`end-cap ${feed.readyNextPass ? "" : "actions-only"}`}>
-          {feed.readyNextPass > 0 && <div>
-            <span>End of this pass</span>
-            <h2>{`${feed.readyNextPass} updated card${feed.readyNextPass === 1 ? "" : "s"} ready when you are.`}</h2>
-          </div>}
+        {!cards.length && !routineActions.length && !feedWork.length && <div className="empty"><h2>Nothing here right now.</h2><p>{tab === "review" ? "A quiet feed is allowed. Wake the feed thread when you want Codex to collect or drain pending work." : "Move back to To review when you are ready."}</p></div>}
+        {compoundProposals.length > 0 && <section className="end-cap actions-only">
           <div className="end-actions">
-            {feed.readyNextPass > 0 && <button className="button primary" onClick={() => void withRefresh(() => post(`/api/feeds/${feed.config.id}/next-pass`), "Started the next pass")}>Review ready cards</button>}
-            {compoundProposals.length > 0 && <button className="button ghost" onClick={openLearningReview}>Review learning proposal</button>}
+            <button className="button ghost" onClick={openLearningReview}>Review learning proposal</button>
           </div>
         </section>}
       </main>

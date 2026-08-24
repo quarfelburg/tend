@@ -8,7 +8,10 @@ import { AttentionStore } from "../server/store";
 
 const roots: string[] = [];
 
-async function setup(notify: (data: unknown) => void = () => {}) {
+async function setup(
+  notify: (data: unknown) => void = () => {},
+  queueCodexThreadMessage?: (input: { threadId: string; prompt: string }) => Promise<{ queuedSubmissionId: string }>,
+) {
   const root = await mkdtemp(path.join(os.tmpdir(), "attention-api-test-"));
   roots.push(root);
   const store = new AttentionStore(root);
@@ -23,6 +26,7 @@ async function setup(notify: (data: unknown) => void = () => {}) {
     root,
     sqlite: { status: () => ({ ok: true }) } as any,
     store,
+    ...(queueCodexThreadMessage ? { queueCodexThreadMessage } : {}),
   });
   return { app, domain, store };
 }
@@ -52,6 +56,41 @@ describe("API routing and mutation hardening", () => {
     expect(response.headers.get("content-type")).toContain("text/html");
     expect(response.headers.get("content-security-policy")).toContain("sandbox");
     expect(await response.text()).toContain("<title>Review</title>");
+  });
+
+  test("injects a safe Tend return path into sandboxed review HTML", async () => {
+    const { app } = await setup();
+    const root = roots.at(-1)!;
+    await mkdir(path.join(root, "html"), { recursive: true });
+    await writeFile(
+      path.join(root, "html", "clarityboard.html"),
+      '<!doctype html><a data-tend-return href="/feed/active-projects">Open Tend</a>',
+    );
+
+    const response = await app.request(
+      "/review-artifacts/clarityboard.html?returnTo=%2Ffeed%2Fpersonal-okrs%3Ftab%3Dreview",
+    );
+    const html = await response.text();
+
+    expect(html).toContain('href="/feed/personal-okrs?tab=review"');
+    expect(html).not.toContain('href="/feed/active-projects"');
+    expect(response.headers.get("content-security-policy")).not.toContain("allow-scripts");
+  });
+
+  test("rejects non-feed return paths for review HTML", async () => {
+    const { app } = await setup();
+    const root = roots.at(-1)!;
+    await mkdir(path.join(root, "html"), { recursive: true });
+    await writeFile(
+      path.join(root, "html", "clarityboard.html"),
+      '<!doctype html><a data-tend-return href="/feed/active-projects">Open Tend</a>',
+    );
+
+    const response = await app.request(
+      "/review-artifacts/clarityboard.html?returnTo=https%3A%2F%2Fevil.example%2Ffeed%2Finbox",
+    );
+
+    expect(await response.text()).toContain('href="/feed/active-projects"');
   });
 
   test("rejects foreign Origin mutations and allows no-Origin CLI-style mutations", async () => {
@@ -174,6 +213,53 @@ describe("API routing and mutation hardening", () => {
     expect(response.status).toBe(200);
     expect(bytes).not.toContain("capabilityToken");
     expect(bytes).not.toContain(persisted.capabilityToken);
+  });
+
+  test("adds card context to its Codex task and records the clarity failure", async () => {
+    const queued: Array<{ threadId: string; prompt: string }> = [];
+    const { app, domain, store } = await setup(
+      () => {},
+      async (input) => {
+        queued.push(input);
+        return { queuedSubmissionId: "queued-chat-1" };
+      },
+    );
+    await domain.bindFeed("inbox", "thread-codex-chat");
+    await domain.upsertCard("inbox", {
+      id: "chat-context-card",
+      title: "Choose the launch route",
+      why: "The recommendation needs a founder decision.",
+      blocks: [
+        { id: "next", type: "memo", label: "Next", text: "Choose route A or route B." },
+        { id: "codex-task", type: "memo", label: "Recommended Codex task", text: "Prepare the selected route after Hayden decides." },
+      ],
+      actions: [{ id: "choose-a", label: "Choose route A", behavior: "queue_instruction", instruction: "Prepare route A." }],
+    });
+
+    const response = await app.request("/api/feeds/inbox/cards/chat-context-card/chat", jsonPost({}));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      queuedSubmissionId: "queued-chat-1",
+      codexUrl: "codex://threads/thread-codex-chat",
+    });
+    expect(queued).toHaveLength(1);
+    expect(queued[0]).toMatchObject({ threadId: "thread-codex-chat" });
+    expect(queued[0].prompt).toContain("Do not execute, approve, queue, send, publish, edit");
+    expect(queued[0].prompt).toContain("Choose route A or route B.");
+    expect(queued[0].prompt).toContain("Prepare the selected route after Hayden decides.");
+
+    const feedback = (await store.readAppFeedback()).at(-1)!;
+    expect(feedback).toMatchObject({
+      feedId: "inbox",
+      sourceCardId: "chat-context-card",
+      sourceThreadId: "thread-codex-chat",
+      surface: "next_thing",
+      category: "simplicity_communication",
+      status: "open",
+    });
+    expect((await store.readCard("inbox", "chat-context-card")).history.at(-1)?.type).toBe("user.requested_task_chat");
+    expect((await store.readEvents("inbox")).at(-1)?.type).toBe("card.task_chat_requested");
   });
 
   test("returns a warning when browser reassignment sends approved external mutation work to Claude", async () => {

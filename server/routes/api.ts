@@ -8,8 +8,39 @@ import { mindContextPublicationReceipt } from "../domain";
 import { versionInfo } from "../version";
 import { body, mutation, mutationAccessError, type LocalRouteContext } from "./shared";
 
+function safeFeedReturnTo(value?: string): string | null {
+  if (!value) return null;
+  try {
+    const base = new URL("http://tend.local");
+    const parsed = new URL(value, base);
+    if (parsed.origin !== base.origin || !parsed.pathname.startsWith("/feed/")) return null;
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return null;
+  }
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function injectTendReturnPath(html: string, returnTo?: string): string {
+  const safeReturnTo = safeFeedReturnTo(returnTo);
+  if (!safeReturnTo) return html;
+  return html.replace(/<a\b[^>]*\bdata-tend-return\b[^>]*>/i, (tag) => {
+    const href = `href="${escapeHtmlAttribute(safeReturnTo)}"`;
+    return /\bhref=(['"])[^'"]*\1/i.test(tag)
+      ? tag.replace(/\bhref=(['"])[^'"]*\1/i, href)
+      : tag.replace(/>$/, ` ${href}>`);
+  });
+}
+
 export function apiRoutes(context: LocalRouteContext): Hono {
-  const { artifactsDir, dataDir, domain, mobileStatus, mutationToken, notify, sqlite, store } = context;
+  const { artifactsDir, dataDir, domain, mobileStatus, mutationToken, notify, queueCodexThreadMessage, sqlite, store } = context;
   const app = new Hono();
 
   app.use("/api/*", async (c, next) => {
@@ -50,6 +81,11 @@ export function apiRoutes(context: LocalRouteContext): Hono {
       };
       if (path.extname(name).toLowerCase() === ".html") {
         headers["content-security-policy"] = "sandbox; default-src 'self' data: https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: https:; font-src 'self' data: https:";
+        return c.body(
+          injectTendReturnPath(contents.toString("utf8"), c.req.query("returnTo")),
+          200,
+          headers,
+        );
       }
       return c.body(contents, 200, headers);
     } catch {
@@ -136,6 +172,26 @@ export function apiRoutes(context: LocalRouteContext): Hono {
   app.post("/api/feeds/:feed/work/:work/retry", async (c) => mutation(c, notify, async () => domain.retryApprovedWork(c.req.param("feed"), c.req.param("work"))));
   app.post("/api/feeds/:feed/routine-actions/:group/approve", async (c) => mutation(c, notify, async () => domain.approveRoutineActionGroup(c.req.param("feed"), c.req.param("group"))));
   app.post("/api/feeds/:feed/cards/:card/actions/:action", async (c) => mutation(c, notify, async () => domain.runCardAction(c.req.param("feed"), c.req.param("card"), c.req.param("action"))));
+  app.post("/api/feeds/:feed/cards/:card/chat", async (c) => mutation(c, notify, async () => {
+    if (!queueCodexThreadMessage) throw new Error("The Codex task-chat bridge is unavailable.");
+    const handoff = await domain.requestCardChat(c.req.param("feed"), c.req.param("card"));
+    try {
+      const queued = await queueCodexThreadMessage({ threadId: handoff.threadId, prompt: handoff.prompt });
+      return {
+        feedbackId: handoff.feedbackId,
+        queuedSubmissionId: queued.queuedSubmissionId,
+        codexUrl: `codex://threads/${encodeURIComponent(handoff.threadId)}`,
+      };
+    } catch (error) {
+      await domain.recordCardChatHandoffFailure(
+        c.req.param("feed"),
+        c.req.param("card"),
+        handoff.feedbackId,
+        error instanceof Error ? error.message : String(error),
+      );
+      throw error;
+    }
+  }));
   app.post("/api/feeds/:feed/cards/:card/approve", async (c) => mutation(c, notify, async () => domain.approveAction(c.req.param("feed"), c.req.param("card"))));
   app.post("/api/feeds/:feed/cards/:card/dismiss", async (c) => mutation(c, notify, async () => domain.dismissCard(c.req.param("feed"), c.req.param("card"))));
   app.post("/api/feeds/:feed/cards/:card/heartbeat-disposition", async (c) => mutation(c, notify, async () => {

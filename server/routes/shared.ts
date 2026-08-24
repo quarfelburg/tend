@@ -17,6 +17,7 @@ export type LocalRouteContext = {
   store: AttentionStore;
   mobileStatus?: () => MobileSyncStatus;
   mutationToken: string;
+  queueCodexThreadMessage?: (input: { threadId: string; prompt: string }) => Promise<{ queuedSubmissionId: string }>;
 };
 
 export async function body(c: any): Promise<Record<string, unknown>> {

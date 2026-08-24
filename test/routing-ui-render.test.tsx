@@ -70,6 +70,15 @@ test("TopBar renders Claude presence liveness and label", () => {
   expect(html).toContain("tend-agent-live");
 });
 
+test("TopBar links every feed to the configured ClarityBoard", () => {
+  const html = renderToStaticMarkup(
+    <TopBar state={workspace(undefined, { links: [{ id: "clarityboard", label: "ClarityBoard", href: "/review-artifacts/clarityboard.html" }] })} onMind={() => {}} onFeed={() => {}} />,
+  );
+
+  expect(html).toContain('href="/review-artifacts/clarityboard.html"');
+  expect(html).toContain("ClarityBoard");
+});
+
 test("Dock renders Claude routing toggle and agent-aware placeholder", () => {
   const active = feed();
   const html = renderToStaticMarkup(

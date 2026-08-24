@@ -24,6 +24,12 @@ export function TopBar({
   const claude = state.agents?.claude ?? { liveness: "offline" as const, lastSeenAt: null };
   const showClaudeChip = Boolean(state.agents?.claude?.lastSeenAt || state.agents?.claude?.sessionId || state.active.thread.agents?.claude);
   const claudeLabel = claude.label ? `Claude ${claude.liveness} · ${claude.label}` : `Claude ${claude.liveness}`;
+  const workspaceLinks = (state.links ?? []).map((link) => ({
+    ...link,
+    href: link.href.startsWith("/review-artifacts/") && typeof window !== "undefined"
+      ? `${link.href}?returnTo=${encodeURIComponent(`${window.location.pathname}${window.location.search}`)}`
+      : link.href,
+  }));
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: PointerEvent) => {
@@ -41,6 +47,9 @@ export function TopBar({
           {claudeLabel}
         </span>
       )}
+      {workspaceLinks.length > 0 && <nav className="workspace-links" aria-label="Workspace links">
+        {workspaceLinks.map((link) => <a key={link.id} className="workspace-link" href={link.href}>{link.label}</a>)}
+      </nav>}
       {open && (
         <div className="feed-menu">
           <button className={destination === "mind" ? "selected" : ""} onClick={() => { onMind(); setOpen(false); }}>

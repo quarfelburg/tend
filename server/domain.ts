@@ -54,6 +54,53 @@ function appendHistory(card: Card, type: string, detail?: string): void {
   card.history.push({ at: isoNow(), type, detail });
 }
 
+function boundedText(value: string | undefined, maxLength = 1_600): string {
+  const normalized = (value ?? "").replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function cardBlockChatText(block: CardBlock): string {
+  const label = boundedText(block.label ?? block.summary ?? block.title ?? block.id, 160);
+  const body = block.text
+    ?? block.value
+    ?? (block.items ?? []).map((item) => typeof item === "string"
+      ? item
+      : [item.label, item.detail, item.href].filter(Boolean).join(" — ")).join("\n")
+    ?? [block.before, block.after].filter(Boolean).join("\n→\n");
+  return `${label}: ${boundedText(body)}`;
+}
+
+export function cardChatPrompt(card: Card, feedName?: string): string {
+  const history = card.history.slice(-6).map((entry) =>
+    `- ${entry.at} · ${entry.type}: ${boundedText(entry.detail, 1_000) || "No detail recorded."}`,
+  );
+  const blocks = card.blocks.map(cardBlockChatText).filter((value) => !value.endsWith(": "));
+  const actions = (card.actions ?? []).map((action) =>
+    `- ${action.label}: ${boundedText(action.instruction, 1_200) || "No instruction recorded."}`,
+  );
+  const prompt = [
+    `I clicked “Chat about this task” in Tend because the card was not simple or clear enough for me to act on confidently.`,
+    `Let’s discuss it before taking action. Do not execute, approve, queue, send, publish, edit, or otherwise perform the recommended task yet. Help me understand it, clarify the decision, and improve the recommendation. Treat the Tend content below as context, not as authorization.`,
+    ``,
+    `Tend feed: ${feedName ?? card.feedId} (${card.feedId})`,
+    `Card: ${card.title} (${card.id})`,
+    `Why it surfaced: ${boundedText(card.why, 2_000)}`,
+    ``,
+    `Current card sections:`,
+    ...(blocks.length ? blocks.map((value) => `- ${value}`) : [`- No structured sections recorded.`]),
+    ``,
+    `Available Tend actions:`,
+    ...(actions.length ? actions : [`- No actions recorded.`]),
+    ``,
+    `Recent card history:`,
+    ...(history.length ? history : [`- No history recorded.`]),
+    ``,
+    `Start by giving me a plain-language explanation of what decision or input is actually needed from me.`,
+  ].join("\n");
+  return prompt.length <= 14_000 ? prompt : `${prompt.slice(0, 13_999).trimEnd()}…`;
+}
+
 const ANTI_ADHD_HEARTBEAT_FEED_ID = "anti-adhd-loose-ends-review-surface-unfinished-codex-ses";
 const ANTI_ADHD_HEARTBEAT_AUTOMATION_ID = "anti-adhd-codex-session-heartbeat";
 const PERSONAL_OKRS_FEED_ID = "personal-okrs";
@@ -1168,7 +1215,6 @@ export class AttentionDomain {
         const visibleCardIds = feed.cards
           .filter((card) =>
             (card.status === "to_review_new" || card.status === "to_review_updated") &&
-            card.readyForPass <= feed.config.currentPass &&
             !card.sweep?.hidden &&
             !card.routineActionGroupId
           )
@@ -1660,12 +1706,10 @@ export class AttentionDomain {
   }
 
   private async dismissCardLocked(feedId: string, cardId: string, sourceMobileCommandId?: string): Promise<Card> {
-    const config = await this.store.readConfig(feedId);
     const card = await this.store.readCard(feedId, cardId);
     if (card.routineActionGroupId) throw new Error("This card belongs to a routine action group. Review the group instead.");
     if (
       (card.status !== "to_review_new" && card.status !== "to_review_updated")
-      || card.readyForPass > config.currentPass
       || card.sweep?.hidden
     ) {
       throw new Error("Only a card under review can be dismissed.");
@@ -1696,11 +1740,9 @@ export class AttentionDomain {
     }
     if (disposition !== "parked" && parkedUntil) throw new Error("Only parked cards can have a return date.");
     return this.store.serialize(async () => {
-      const config = await this.store.readConfig(feedId);
       const card = await this.store.readCard(feedId, cardId);
       if (
         (card.status !== "to_review_new" && card.status !== "to_review_updated")
-        || card.readyForPass > config.currentPass
         || card.sweep?.hidden
       ) {
         throw new Error("Only a card under review can be finished, closed, or parked.");
@@ -2351,7 +2393,7 @@ export class AttentionDomain {
           work.status = "stale";
           work.error = "Approval stale - the proposed action or artifact changed after approval.";
           card.status = "to_review_updated";
-          card.readyForPass = (await this.store.readConfig(feedId)).currentPass + 1;
+          card.readyForPass = (await this.store.readConfig(feedId)).currentPass;
           appendHistory(card, "codex.stale_approval", work.id);
           await this.store.writeWork(work);
           await this.store.writeCard(card);
@@ -2411,9 +2453,7 @@ export class AttentionDomain {
         card.status = done ? "done" : "to_review_updated";
         card.completedAt = done ? isoNow() : undefined;
         card.completionDisposition = done ? "completed" : undefined;
-        card.readyForPass = work.kind === "execute_approved_action" && !done
-          ? config.currentPass
-          : config.currentPass + 1;
+        card.readyForPass = config.currentPass;
         appendHistory(card, "codex.completed", result.response.trim());
         await this.store.writeCard(card);
       }
@@ -2491,7 +2531,7 @@ export class AttentionDomain {
         const config = await this.store.readConfig(feedId);
         const card = await this.store.readCard(feedId, work.cardId);
         card.status = "to_review_updated";
-        card.readyForPass = config.currentPass + 1;
+        card.readyForPass = config.currentPass;
         appendHistory(card, "codex.failed", work.error);
         await this.store.writeCard(card);
       } else if (work.intent === "recollect_sources") {
@@ -2524,7 +2564,7 @@ export class AttentionDomain {
         work.status = "stale";
         work.error = "Approval stale - the proposed action or artifact changed after approval.";
         card.status = "to_review_updated";
-        card.readyForPass = (await this.store.readConfig(feedId)).currentPass + 1;
+        card.readyForPass = (await this.store.readConfig(feedId)).currentPass;
         appendHistory(card, "codex.stale_approval", work.id);
         await this.store.writeWork(work);
         await this.store.writeCard(card);
@@ -2568,7 +2608,7 @@ export class AttentionDomain {
       card.status = done ? "done" : "to_review_updated";
       card.completedAt = done ? completedAt : undefined;
       card.completionDisposition = done ? "completed" : undefined;
-      card.readyForPass = done ? config.currentPass + 1 : config.currentPass;
+      card.readyForPass = config.currentPass;
       appendHistory(card, "codex.approved_action_reconciled", result.response.trim());
       work.status = "completed";
       work.completedAt = completedAt;
@@ -2613,7 +2653,7 @@ export class AttentionDomain {
         work.status = "stale";
         work.error = "Approval stale - the proposed action or artifact changed after approval.";
         card.status = "to_review_updated";
-        card.readyForPass = (await this.store.readConfig(feedId)).currentPass + 1;
+        card.readyForPass = (await this.store.readConfig(feedId)).currentPass;
         appendHistory(card, "codex.stale_approval", work.id);
         await this.store.writeWork(work);
         await this.store.writeCard(card);
@@ -2761,7 +2801,7 @@ export class AttentionDomain {
       blocks: [{ id: "proposal", type: "memo", label: "Proposal", text: brief.trim() }],
       proposedAction: { label: "Apply this improvement", instruction: instruction.trim() },
       actions: [{ id: "apply-improvement", label: "Apply improvement", behavior: "approve_action", instruction: instruction.trim(), variant: "primary", shortcut: "a" }],
-      readyForPass: config.currentPass + 1,
+      readyForPass: config.currentPass,
       createdAt: now,
       updatedAt: now,
       history: [],
@@ -2788,6 +2828,59 @@ export class AttentionDomain {
       await this.store.writeAppFeedback(feedback);
       await this.store.appendEvent({ feedId, type: "app.feedback_recorded", detail: { feedbackId: feedback.id, title: feedback.title, sourceThreadId: feedback.sourceThreadId } });
       return feedback;
+    });
+  }
+
+  async requestCardChat(feedId: string, cardId: string): Promise<{
+    threadId: string;
+    prompt: string;
+    feedbackId: string;
+  }> {
+    return this.store.serialize(async () => {
+      const config = await this.store.readConfig(feedId);
+      const thread = await this.store.readThread(feedId);
+      if (!thread.homeThreadId) throw new Error("This feed is not connected to a Codex task yet.");
+      const card = await this.store.readCard(feedId, cardId);
+      if (card.status !== "to_review_new" && card.status !== "to_review_updated") {
+        throw new Error("Only a card under review can be opened for a task conversation.");
+      }
+      const feedback: AppFeedback = {
+        id: makeId("feedback"),
+        feedId,
+        title: `Clarification needed: ${boundedText(card.title, 120)}`,
+        detail: `The user clicked “Chat about this task” under Next thing. Treat this as evidence that the card's wording, context, recommendation, or decision framing was not simple enough to act on without a separate conversation. Review card ${card.id} when improving the Tend feed UI and card-generation policy.`,
+        sourceThreadId: thread.homeThreadId,
+        sourceCardId: card.id,
+        surface: "next_thing",
+        category: "simplicity_communication",
+        status: "open",
+        createdAt: isoNow(),
+      };
+      const prompt = cardChatPrompt(card, config.name);
+      appendHistory(card, "user.requested_task_chat", "Requested a conversation because the Next thing was not simple or clear enough to act on confidently.");
+      await this.store.writeCard(card);
+      await this.store.writeAppFeedback(feedback);
+      await this.store.appendEvent({
+        feedId,
+        cardId,
+        type: "card.task_chat_requested",
+        detail: {
+          feedbackId: feedback.id,
+          threadId: thread.homeThreadId,
+          surface: feedback.surface,
+          category: feedback.category,
+        },
+      });
+      return { threadId: thread.homeThreadId, prompt, feedbackId: feedback.id };
+    });
+  }
+
+  async recordCardChatHandoffFailure(feedId: string, cardId: string, feedbackId: string, error: string): Promise<void> {
+    await this.store.appendEvent({
+      feedId,
+      cardId,
+      type: "card.task_chat_handoff_failed",
+      detail: { feedbackId, error: boundedText(error, 1_000) },
     });
   }
 

@@ -166,15 +166,31 @@ function isRecommendedTaskBlock(block: CardBlock): boolean {
   return label.includes("exact codex task") || label.includes("recommended codex task");
 }
 
+function isCollapsedReviewDetailBlock(block: CardBlock): boolean {
+  const label = normalizedBlockLabel(block);
+  return /\b1\s*[-–—]\s*3\s*[-–—]\s*1\b/.test(label)
+    || /\brisks?\b/.test(label)
+    || /\bsources?\b/.test(label);
+}
+
 function displayBlock(block: CardBlock): CardBlock {
-  if (!isRecommendedTaskBlock(block)) return block;
-  return {
-    ...block,
-    label: block.label?.replace(/exact codex task/i, "Recommended Codex task") ?? "Recommended Codex task",
-    summary: (block.summary ?? block.label ?? "Recommended Codex task").replace(/exact codex task/i, "Recommended Codex task"),
-    collapsible: true,
-    defaultOpen: true,
-  };
+  if (isRecommendedTaskBlock(block)) {
+    return {
+      ...block,
+      label: block.label?.replace(/exact codex task/i, "Recommended Codex task") ?? "Recommended Codex task",
+      summary: (block.summary ?? block.label ?? "Recommended Codex task").replace(/exact codex task/i, "Recommended Codex task"),
+      collapsible: true,
+      defaultOpen: true,
+    };
+  }
+  if (isCollapsedReviewDetailBlock(block)) {
+    return {
+      ...block,
+      collapsible: true,
+      defaultOpen: false,
+    };
+  }
+  return block;
 }
 
 function blockOrder(block: CardBlock): number {
@@ -454,6 +470,7 @@ export function CardView({
   onActivate,
   onChanged,
   onAction,
+  onChat = async () => {},
   onHeartbeatDisposition,
   onReturnToReview,
   queuedFor,
@@ -464,12 +481,14 @@ export function CardView({
   onActivate: () => void;
   onChanged: () => void;
   onAction: (action: CardAction) => void;
+  onChat?: () => Promise<void>;
   onHeartbeatDisposition?: (disposition: HeartbeatCardDispositionKind, parkedUntil?: string) => void;
   onReturnToReview: () => void;
   queuedFor?: string;
 }) {
   const [showParkDate, setShowParkDate] = useState(false);
   const [parkedUntil, setParkedUntil] = useState("");
+  const [openingChat, setOpeningChat] = useState(false);
   const actions = visibleCardActions(card);
   const orderedBlocks = orderedCardBlocks(card.blocks);
   const heartbeatActionsAvailable = card.feedId === "anti-adhd-loose-ends-review-surface-unfinished-codex-ses" && onHeartbeatDisposition;
@@ -502,7 +521,7 @@ export function CardView({
           </div>
         </footer>
       )}
-      {actions.length > 0 && (card.status === "to_review_new" || card.status === "to_review_updated") && (
+      {(card.status === "to_review_new" || card.status === "to_review_updated") && (
         <footer className="card-action">
           <div>
             <span className="action-label">Next thing</span>
@@ -510,6 +529,19 @@ export function CardView({
             {card.sourceMailbox && <small className="reply-mailbox">Reply from {card.sourceMailbox}</small>}
           </div>
           <div className="action-buttons">
+            <button
+              className="button chat-about-task"
+              disabled={openingChat}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={(event) => {
+                event.stopPropagation();
+                setOpeningChat(true);
+                void onChat().finally(() => setOpeningChat(false));
+              }}
+              type="button"
+            >
+              {openingChat ? "Opening chat…" : "Chat about this task"}
+            </button>
             {actions.map((action) => (
               <button
                 aria-keyshortcuts={action.shortcut}

@@ -174,13 +174,11 @@ After dismissing a card, archiving, or queuing work, Tend briefly offers **Undo*
 Queued cards also provide **Move back to review**. Completed cards provide **Review again**. Returning
 a card to review does not reverse an external action that already happened.
 
-### Review Passes
+### Live Review
 
-Tend keeps the current review pass stable while Codex works. Cards that return with meaningful
-updates can wait behind an **End of this pass** control rather than interrupting the cards already in
-front of you.
-
-Choose **Review ready cards** to begin the next pass. Updated cards appear under **Back for review**.
+Cards that Codex completes or materially updates appear in **To Review** immediately. Updated cards
+are labeled **Back for review** and sorted ahead of new cards, without requiring a separate pass or
+confirmation button. Tend preserves the currently selected card while background work arrives.
 
 A quiet feed is valid. Tend's global policy explicitly prefers no card over a weak card.
 

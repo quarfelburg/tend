@@ -166,6 +166,7 @@ export class AttentionStore {
     return {
       feeds,
       active: await this.readFeed(selected),
+      links: await this.readWorkspaceLinks(),
       agents: await this.readWorkspaceAgents(),
       dictation: await this.readDictationCapability(),
       proposals: await this.readRevisionProposals(selected),
@@ -190,6 +191,27 @@ export class AttentionStore {
 
   async readDictationCapability(): Promise<DictationCapability> {
     return readJson<DictationCapability>(this.path("integrations/dictation.json"));
+  }
+
+  private async readWorkspaceLinks(): Promise<NonNullable<WorkspaceView["links"]>> {
+    const file = this.path("workspace-links.json");
+    if (!existsSync(file)) return [];
+    try {
+      const links = await readJson<unknown>(file);
+      if (!Array.isArray(links)) return [];
+      return links.flatMap((link) => {
+        if (!link || typeof link !== "object") return [];
+        const candidate = link as Record<string, unknown>;
+        const id = typeof candidate.id === "string" ? candidate.id.trim() : "";
+        const label = typeof candidate.label === "string" ? candidate.label.trim() : "";
+        const href = typeof candidate.href === "string" ? candidate.href.trim() : "";
+        const safeHref = (href.startsWith("/") && !href.startsWith("//")) || /^https?:\/\//.test(href);
+        if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(id) || !label || label.length > 64 || !safeHref) return [];
+        return [{ id, label, href }];
+      });
+    } catch {
+      return [];
+    }
   }
 
   async readMindContextBinding(): Promise<MindContextBinding> {
@@ -385,7 +407,9 @@ export class AttentionStore {
       work: work.map(workItemView),
       sweep,
       drain,
-      readyNextPass: cards.filter((card) => card.status === "to_review_updated" && card.readyForPass > config.currentPass).length,
+      // Review cards now surface immediately. Keep this legacy field for API compatibility while
+      // older clients migrate away from the manual next-pass interaction.
+      readyNextPass: 0,
     };
   }
 

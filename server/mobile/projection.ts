@@ -103,7 +103,7 @@ function projectFeedItems(feed: FeedView): MobileCardProjection[] {
 }
 
 function projectCard(feed: FeedView, card: Card, generation: string, reviewIndex: number): MobileCardProjection {
-  const reviewable = isReviewableCard(feed, card);
+  const reviewable = isReviewableCard(card);
   const actions = visibleCardActions(card).map((action) => projectCardAction(feed, card, action));
   const activeWork = latestActiveWork(feed.work, card.id);
   const base = {
@@ -243,9 +243,8 @@ function visibleCardActions(card: Card): CardAction[] {
   ];
 }
 
-function isReviewableCard(feed: FeedView, card: Card): boolean {
+function isReviewableCard(card: Card): boolean {
   return (card.status === "to_review_new" || card.status === "to_review_updated")
-    && card.readyForPass <= feed.config.currentPass
     && !card.sweep?.hidden
     && !card.routineActionGroupId;
 }

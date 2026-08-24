@@ -466,6 +466,19 @@ describe("filesystem workspace", () => {
     expect(await readFile(path.join(root, "prompts", "execute-work.md"), "utf8")).toContain("write as the owner of `sourceMailbox`");
   });
 
+  test("loads safe operator workspace links while dropping malformed entries", async () => {
+    const { root, store } = await setup();
+    await writeFile(path.join(root, "workspace-links.json"), JSON.stringify([
+      { id: "clarityboard", label: "ClarityBoard", href: "/review-artifacts/clarityboard.html" },
+      { id: "unsafe", label: "Unsafe", href: "javascript:alert(1)" },
+      { id: "Bad Id", label: "Malformed", href: "https://example.com" },
+    ]));
+
+    expect((await store.readWorkspace()).links).toEqual([
+      { id: "clarityboard", label: "ClarityBoard", href: "/review-artifacts/clarityboard.html" },
+    ]);
+  });
+
   test("lets Codex detect Monologue and persist its configured recording shortcut", async () => {
     const { root, domain, store } = await setup();
     const appPath = path.join(root, "Monologue.app");
@@ -1062,7 +1075,7 @@ describe("thread-owned work drain", () => {
     expect(JSON.stringify(claimedEvent)).not.toContain(claimed.capabilityToken);
   });
 
-  test("queues, claims, completes, and buffers finished work for the next pass", async () => {
+  test("queues, claims, completes, and returns finished work directly to review", async () => {
     const { store, domain } = await setup();
     await domain.bindFeed("inbox", "thread-inbox");
     const queued = await domain.queueInstruction("inbox", "inbox-ready-to-collect", "Collect the first real sweep.");
@@ -1072,10 +1085,10 @@ describe("thread-owned work drain", () => {
     expect((await store.readCard("inbox", "inbox-ready-to-collect")).status).toBe("working");
     await domain.completeWork("inbox", queued.id, claimed.capabilityToken, { response: "Collection complete." });
     const workspace = await store.readWorkspace("inbox");
-    expect(workspace.active.cards.find((card) => card.id === "inbox-ready-to-collect")?.status).toBe("to_review_updated");
-    expect(workspace.active.readyNextPass).toBe(1);
-    await domain.beginNextPass("inbox");
-    expect((await store.readConfig("inbox")).currentPass).toBe(2);
+    const completedCard = workspace.active.cards.find((card) => card.id === "inbox-ready-to-collect");
+    expect(completedCard?.status).toBe("to_review_updated");
+    expect(completedCard?.readyForPass).toBe(workspace.active.config.currentPass);
+    expect(workspace.active.readyNextPass).toBe(0);
   });
 
   test("cancels a stray queued instruction before Codex starts and restores the card", async () => {
@@ -2745,14 +2758,17 @@ describe("local card dismissal (Tend-only, no source cleanup)", () => {
     await expect(domain.dismissCard("inbox", "inbox-ready-to-collect")).rejects.toThrow("under review");
   });
 
-  test("local dismiss rejects hidden and future-pass cards", async () => {
+  test("local dismiss accepts legacy future-pass cards now that review is immediate", async () => {
     const { store, domain } = await setup();
     const card = await store.readCard("inbox", "inbox-ready-to-collect");
     card.readyForPass = (await store.readConfig("inbox")).currentPass + 1;
     await store.writeCard(card);
-    await expect(domain.dismissCard("inbox", card.id)).rejects.toThrow("under review");
+    await expect(domain.dismissCard("inbox", card.id)).resolves.toMatchObject({ status: "done" });
+  });
 
-    card.readyForPass = 1;
+  test("local dismiss still rejects hidden cards", async () => {
+    const { store, domain } = await setup();
+    const card = await store.readCard("inbox", "inbox-ready-to-collect");
     card.sweep = { rank: 1, hidden: true, feedbackId: "hidden-feedback" };
     await store.writeCard(card);
     await expect(domain.dismissCard("inbox", card.id)).rejects.toThrow("under review");

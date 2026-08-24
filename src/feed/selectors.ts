@@ -3,10 +3,9 @@ import type { Card, CardAction, FeedView, RoutineActionGroup, WorkItemView } fro
 import { safeConfiguredCardActions } from "../../shared/cardActions";
 
 export function visibleCards(feed: FeedView, tab: Tab): Card[] {
-  const pass = feed.config.currentPass;
   if (tab === "review") {
     return feed.cards
-      .filter((card) => (card.status === "to_review_new" || card.status === "to_review_updated") && card.readyForPass <= pass && !card.sweep?.hidden && !card.routineActionGroupId)
+      .filter((card) => (card.status === "to_review_new" || card.status === "to_review_updated") && !card.sweep?.hidden && !card.routineActionGroupId)
       .sort((left, right) => {
         if (left.sweep?.rank !== undefined || right.sweep?.rank !== undefined) return (left.sweep?.rank ?? Number.MAX_SAFE_INTEGER) - (right.sweep?.rank ?? Number.MAX_SAFE_INTEGER);
         if (left.status !== right.status) return left.status === "to_review_updated" ? -1 : 1;

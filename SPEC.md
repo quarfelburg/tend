@@ -624,21 +624,18 @@ disposition.
 
 Returning a card to review MUST NOT imply that a completed external action was reversed.
 
-### 9.2 Review Pass Stability
+### 9.2 Live Review Stability
 
-A review pass is the stable set the user is currently working through.
+Review is a live set that stays current as background work finishes.
 
-- Starting a pass MUST persist the exact card identities and material revisions included.
-- New cards and material updates arriving during an active pass SHOULD be buffered for the next
-  pass rather than inserted ahead of the user. A buffered update MUST NOT rewrite the revision the
-  user is currently reviewing.
-- The user MUST have an explicit way to begin the next ready pass.
-- Restoring a done card to review MAY place it in a later pass.
-- A next pass is `ready` when it contains a new card, a buffered material revision, or a restored
-  card. Ending a pass MUST carry unresolved cards forward or keep them visibly accessible in their
-  prior pass; it MUST NOT silently discard them.
-- Implementations MAY use a different visual model, but MUST preserve the ability to review a stable
-  set without agent updates continually reshuffling it.
+- New cards and material updates MUST become available in review without a separate pass-advance
+  action.
+- Updated cards SHOULD be visibly distinguished from first-time cards and sorted predictably.
+- A background update MUST NOT clear the user's current card selection or silently discard an
+  unresolved card.
+- Restoring a done card to review MUST make it immediately accessible.
+- Implementations MAY preserve legacy pass identifiers for compatibility, but those identifiers
+  MUST NOT hide an otherwise reviewable card or require an extra user click.
 
 ### 9.3 Local Disposition
 
@@ -1527,16 +1524,14 @@ REQUIRED even when validation is manual.
 4. Attempt to publish or authorize a new action from the old run.
 5. Verify the runtime rejects or safely marks it stale.
 
-### 20.4 Stable Review Pass
+### 20.4 Live Review Updates
 
-1. Begin reviewing two cards in pass N.
-2. Publish a meaningful third card while the pass is active.
-3. Verify the original set remains stable.
-4. Materially update one of the original cards and verify its reviewed revision remains stable while
-   the update is buffered.
-5. End pass N with one unresolved card and explicitly begin the ready next pass.
-6. Verify the new card and buffered revision appear there, and the unresolved card remains
-   accessible under the documented carry-forward rule.
+1. Begin reviewing two cards and select one as the current card.
+2. Publish a meaningful third card while review is open.
+3. Verify the new card appears in review without a pass-advance action.
+4. Materially update one of the original cards and verify it is visibly marked as updated.
+5. Verify the user's current card selection remains intact and every unresolved card stays
+   accessible.
 
 ### 20.5 Scoped Steering
 

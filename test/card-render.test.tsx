@@ -76,6 +76,37 @@ test("renders collapsible card blocks closed unless defaultOpen is set", () => {
   expect(html).toContain('<details class="block-collapsible block-collapsible-memo" open="">');
 });
 
+test("keeps decision, risk, and source sections collapsed even when card data omits the flags", () => {
+  const card: Card = {
+    id: "semantic-review-expanders",
+    feedId: "anti-adhd-loose-ends-review-surface-unfinished-codex-ses",
+    kind: "attention",
+    status: "to_review_new",
+    title: "Review one current decision",
+    eyebrow: "Loose ends",
+    why: "Review detail should stay scannable regardless of how the card was generated.",
+    blocks: [
+      { id: "decision", type: "memo", label: "1-3-1 decision view", text: "Problem, options, and recommendation." },
+      { id: "risks", type: "checklist", label: "Risks", defaultOpen: true, items: ["One bounded risk."] },
+      { id: "sources", type: "evidence", label: "Sources", items: ["One source."] },
+      { id: "verified", type: "evidence", label: "Verified state right now", items: ["Keep this section visible."] },
+    ],
+    readyForPass: 1,
+    createdAt: "2026-08-24T12:00:00.000Z",
+    updatedAt: "2026-08-24T12:00:00.000Z",
+    history: [],
+  };
+
+  const html = renderToStaticMarkup(<CardView card={card} onChanged={() => {}} />);
+
+  expect(html.match(/<details class="block-collapsible/g)?.length).toBe(3);
+  expect(html).toContain('<summary class="block-summary">1-3-1 decision view</summary>');
+  expect(html).toContain('<summary class="block-summary">Risks</summary>');
+  expect(html).toContain('<summary class="block-summary">Sources</summary>');
+  expect(html).not.toContain('<details class="block-collapsible block-collapsible-checklist" open="">');
+  expect(html).toContain("<h3>Verified state right now</h3>");
+});
+
 test("renders decision cards in review order with summarized history and an expanded recommended task", () => {
   const card: Card = {
     id: "decision-review-order",
@@ -140,6 +171,8 @@ test("renders decision cards in review order with summarized history and an expa
   expect(html).toContain('<details class="block-collapsible block-collapsible-memo" open="">');
   expect(html).toContain("Draft three bounded candidate cycles. Compare each cycle against the same evidence and stop for Hayden&#x27;s choice.");
   expect(html).toContain("Choose the first cycle to test. Draft three bounded candidate cycles.");
+  expect(html).toContain("Chat about this task");
+  expect(html.indexOf("Next thing")).toBeLessThan(html.indexOf("Chat about this task"));
   expect(html).toContain('<a href="/review-artifacts/cycle-review.html"');
   expect(html.match(/Open HTML review/g)?.length).toBe(2);
 

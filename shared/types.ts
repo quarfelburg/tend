@@ -497,6 +497,9 @@ export interface AppFeedback {
   title: string;
   detail: string;
   sourceThreadId?: string;
+  sourceCardId?: string;
+  surface?: "next_thing";
+  category?: "simplicity_communication";
   status: "open" | "resolved";
   createdAt: string;
   resolvedAt?: string;
@@ -562,6 +565,7 @@ export interface FeedView {
 export interface WorkspaceView {
   feeds: Array<{ id: string; name: string; purpose: string }>;
   active: FeedView;
+  links?: Array<{ id: string; label: string; href: string }>;
   agents?: WorkspaceAgentSummary;
   dictation: DictationCapability;
   proposals: RevisionProposal[];

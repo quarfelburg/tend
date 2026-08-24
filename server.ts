@@ -11,6 +11,7 @@ import { DrainDispatcher } from "./server/dispatcher";
 import { loadMobileCloudEnvFile, mobileCloudConfigFromEnv, SupabaseMobileCloudClient } from "./server/mobile/client";
 import { MobileSyncWorker } from "./server/mobile/sync";
 import { makeToken } from "./server/util";
+import { queueAppServerMessage } from "./server/codexAppServer";
 
 declare const Bun: {
   serve(options: { port: number; hostname: string; idleTimeout: number; fetch: (...args: any[]) => any }): { ref(): void; stop(force?: boolean): void };
@@ -49,6 +50,7 @@ app.route("/", apiRoutes({
   root,
   sqlite,
   store,
+  queueCodexThreadMessage: ({ threadId, prompt }) => queueAppServerMessage({ threadId, prompt, cwd: root }),
 }));
 app.route("/", realtime.routes());
 app.route("/", assetRoutes(clientDir));
