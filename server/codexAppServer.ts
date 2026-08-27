@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
@@ -36,12 +37,24 @@ export interface AppServerQueuedMessageOptions {
   timeoutMs?: number;
   log?: (line: string) => void | Promise<void>;
   argv?: string[];
+  desktopProjectsPath?: string | null;
 }
 
 export type AppServerTaskChatHandoff = {
   queuedSubmissionId: string;
   mode: "queued" | "started";
   threadId: string;
+};
+
+type AppServerProject = {
+  id: string;
+  name: string;
+  roots: Array<{ path: string }>;
+};
+
+type AppServerProjectMatch = {
+  id: string;
+  rootPath: string;
 };
 
 interface Pending {
@@ -72,6 +85,41 @@ function archivedThread(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   const normalized = message.toLowerCase();
   return normalized.includes("is archived") && normalized.includes("unarchive");
+}
+
+function threadHasActiveWriter(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.toLowerCase().includes("already has an active writer");
+}
+
+function projectForCwd(projects: AppServerProject[], cwd: string): AppServerProjectMatch | null {
+  const resolvedCwd = path.resolve(cwd);
+  const matches = projects.flatMap((project) => project.roots.map((root) => ({
+    id: project.id,
+    rootPath: path.resolve(root.path),
+  }))).filter((candidate) => {
+    const relative = path.relative(candidate.rootPath, resolvedCwd);
+    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  });
+  return matches.sort((left, right) => right.rootPath.length - left.rootPath.length)[0] ?? null;
+}
+
+async function readDesktopProjectMatch(cwd: string, statePath?: string | null): Promise<AppServerProjectMatch | null> {
+  if (statePath === null) return null;
+  const codexHome = process.env.CODEX_HOME?.trim() || path.join(os.homedir(), ".codex");
+  const contents = await readFile(statePath ?? path.join(codexHome, ".codex-global-state.json"), "utf8");
+  const state = JSON.parse(contents) as {
+    "local-projects"?: Record<string, { id?: string; name?: string; rootPaths?: string[] }>;
+  };
+  const projects = Object.values(state["local-projects"] ?? {}).flatMap((project) => {
+    if (!project.id || !Array.isArray(project.rootPaths)) return [];
+    return [{
+      id: project.id,
+      name: project.name ?? project.id,
+      roots: project.rootPaths.map((rootPath) => ({ path: rootPath })),
+    }];
+  });
+  return projectForCwd(projects, cwd);
 }
 
 export async function queueAppServerMessage(options: AppServerQueuedMessageOptions): Promise<AppServerTaskChatHandoff> {
@@ -144,14 +192,28 @@ export async function queueAppServerMessage(options: AppServerQueuedMessageOptio
       capabilities: { experimentalApi: true },
     }));
     send({ method: "initialized" });
-    const unarchiveAndRetry = async <T>(operation: () => Promise<T>, error: unknown): Promise<T> => {
-      if (!archivedThread(error)) throw error;
-      await log(`[app-server] bound task ${options.threadId} is archived; restoring it before opening the conversation`);
-      await withTimeout(request("thread/unarchive", { threadId: options.threadId }));
-      return operation();
-    };
-    const addToQueue = () => withTimeout(request("thread/queue/add", {
-      threadId: options.threadId,
+    let projectMatch: AppServerProjectMatch | null = null;
+    let projectCanBeAssigned = false;
+    try {
+      const projects = await withTimeout(request("project/list", { limit: 100 })) as { data?: AppServerProject[] };
+      projectMatch = projectForCwd(projects.data ?? [], options.cwd);
+      projectCanBeAssigned = projectMatch !== null;
+    } catch (error) {
+      await log(`[app-server] app-server project lookup unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (!projectMatch) {
+      try {
+        projectMatch = await readDesktopProjectMatch(options.cwd, options.desktopProjectsPath);
+        if (projectMatch) await log(`[app-server] matched the Codex Desktop local project ${projectMatch.id} at ${projectMatch.rootPath}`);
+      } catch (error) {
+        await log(`[app-server] Codex Desktop project lookup unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    if (projectMatch && projectCanBeAssigned) await log(`[app-server] assigning task chat to local project ${projectMatch.id} at ${projectMatch.rootPath}`);
+    if (!projectMatch) await log(`[app-server] no saved local project contains ${options.cwd}; keeping the task ungrouped`);
+    const threadCwd = projectMatch?.rootPath ?? options.cwd;
+    const addToQueue = (threadId: string) => withTimeout(request("thread/queue/add", {
+      threadId,
       clientUserMessageId: randomUUID(),
       input: [{ type: "text", text: options.prompt }],
     })) as Promise<{ queuedSubmission?: { id?: string } }>;
@@ -163,51 +225,75 @@ export async function queueAppServerMessage(options: AppServerQueuedMessageOptio
         content: [{ type: "input_text", text: options.prompt }],
       }],
     }));
-    const resumeThread = (threadId: string) => withTimeout(request("thread/resume", {
+    const readThread = (threadId: string) => withTimeout(request("thread/read", {
       threadId,
-      cwd: options.cwd,
-      approvalPolicy: "never",
-      persistExtendedHistory: false,
-    }));
-    const startReplacementThread = async (): Promise<string> => {
-      await log(`[app-server] bound task ${options.threadId} is archived; creating a fresh active conversation to avoid stale desktop archive state`);
+      includeTurns: false,
+    })) as Promise<{ thread?: { cwd?: string } }>;
+    const startReplacementThread = async (reason: "archived" | "active-writer" | "wrong-project-root"): Promise<string> => {
+      const detail = reason === "archived"
+        ? "is archived"
+        : reason === "active-writer"
+          ? "is owned by a different Codex process"
+          : "is outside the enclosing saved Codex project";
+      await log(`[app-server] bound task ${options.threadId} ${detail}; creating a fresh local conversation that Tend can continue`);
       const result = await withTimeout(request("thread/start", {
-        cwd: options.cwd,
+        cwd: threadCwd,
+        ...(projectMatch && projectCanBeAssigned ? { projectId: projectMatch.id } : {}),
         approvalPolicy: "on-request",
         sandbox: "workspace-write",
       })) as { thread?: { id?: string } };
       const threadId = result.thread?.id;
       if (!threadId) throw new Error("Codex did not return the replacement task ID.");
-      if (options.threadName) {
-        await withTimeout(request("thread/name/set", { threadId, name: options.threadName }));
+      return threadId;
+    };
+    const nameThread = async (threadId: string): Promise<void> => {
+      if (!options.threadName) return;
+      await withTimeout(request("thread/name/set", { threadId, name: options.threadName }));
+    };
+    const prepareSavedThread = async (): Promise<string> => {
+      let threadId = options.threadId;
+      try {
+        const result = await readThread(threadId);
+        const savedCwd = result.thread?.cwd;
+        if (projectMatch && savedCwd && path.resolve(savedCwd) !== path.resolve(threadCwd)) {
+          threadId = await startReplacementThread("wrong-project-root");
+        }
+      } catch (error) {
+        if (archivedThread(error)) threadId = await startReplacementThread("archived");
+        else if (threadHasActiveWriter(error)) threadId = await startReplacementThread("active-writer");
+        else await log(`[app-server] saved task metadata lookup unavailable; attempting a direct quiet handoff: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      if (projectMatch && projectCanBeAssigned) {
+        await withTimeout(request("thread/metadata/update", { threadId, projectId: projectMatch.id }));
       }
       return threadId;
     };
-    const injectIntoSavedThread = async (): Promise<string> => {
-      let threadId = options.threadId;
-      try {
-        await resumeThread(threadId);
-      } catch (error) {
-        if (!archivedThread(error)) throw error;
-        threadId = await startReplacementThread();
-      }
+    const injectIntoSavedThread = async (threadId: string): Promise<string> => {
       await injectContext(threadId);
       return threadId;
     };
-    if (options.argv === undefined && !argv.includes("proxy")) {
-      await log("[app-server] no persistent desktop control bridge is available; injecting context into the saved task without starting an agent turn");
-      const threadId = await injectIntoSavedThread();
-      return { queuedSubmissionId: randomUUID(), mode: "queued", threadId };
-    }
+    let threadId = await prepareSavedThread();
+    await nameThread(threadId);
     try {
-      const result = await addToQueue().catch((error) => unarchiveAndRetry(addToQueue, error));
+      const result = await addToQueue(threadId);
       const queuedSubmissionId = result.queuedSubmission?.id;
       if (!queuedSubmissionId) throw new Error("Codex did not confirm the queued conversation context.");
-      return { queuedSubmissionId, mode: "queued", threadId: options.threadId };
+      return { queuedSubmissionId, mode: "queued", threadId };
     } catch (error) {
+      if (archivedThread(error) || threadHasActiveWriter(error)) {
+        threadId = await startReplacementThread(archivedThread(error) ? "archived" : "active-writer");
+        await nameThread(threadId);
+        if (projectMatch && projectCanBeAssigned) {
+          await withTimeout(request("thread/metadata/update", { threadId, projectId: projectMatch.id }));
+        }
+        const result = await addToQueue(threadId);
+        const queuedSubmissionId = result.queuedSubmission?.id;
+        if (!queuedSubmissionId) throw new Error("Codex did not confirm the queued conversation context.");
+        return { queuedSubmissionId, mode: "queued", threadId };
+      }
       if (!queueAddUnavailable(error)) throw error;
       await log("[app-server] quiet task-chat queue is unavailable; injecting the context without starting an agent turn");
-      const threadId = await injectIntoSavedThread();
+      await injectIntoSavedThread(threadId);
       return { queuedSubmissionId: randomUUID(), mode: "queued", threadId };
     }
   } finally {

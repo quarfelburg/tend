@@ -186,10 +186,9 @@ export function apiRoutes(context: LocalRouteContext): Hono {
     const feedId = c.req.param("feed");
     const handoff = await domain.requestCardChat(feedId, c.req.param("card"));
     try {
-      const config = await store.readConfig(feedId);
       const queued = await queueCodexThreadMessage({
         threadId: handoff.threadId,
-        threadName: `Tend — ${config.name}`,
+        threadName: handoff.threadName,
         prompt: handoff.prompt,
       });
       if (queued.threadId !== handoff.threadId) await domain.bindFeed(feedId, queued.threadId);

@@ -123,6 +123,81 @@ test("App keeps local dismissal and source cleanup undo requests distinct", asyn
   await waitFor(() => expect(requests).toContain("/api/feeds/inbox/cards/cleanup-card/return-to-review"));
 });
 
+test("Top Priorities shows the Tend dock scoped to the source card", async () => {
+  sessionStorage.clear();
+  const state = workspace();
+  const sourceCard = state.active.cards[0];
+  state.feeds = [
+    { id: "top-priorities", name: "Top Priorities", purpose: "Review the highest-priority work." },
+    ...state.feeds,
+  ];
+  state.active = {
+    ...state.active,
+    config: {
+      ...state.active.config,
+      id: "top-priorities",
+      name: "Top Priorities",
+      purpose: "Review the highest-priority work.",
+    },
+    thread: {
+      homeThreadId: null,
+      boundAt: null,
+      heartbeat: { status: "not_proposed", cadence: null, automationId: null },
+    },
+    cards: [{ ...sourceCard, priority: {
+      feedId: "inbox",
+      cardId: sourceCard.id,
+      sourceFeedName: "Inbox",
+      sourceUpdatedAt: sourceCard.updatedAt,
+      dimensions: { impact: 25, costOfDelay: 20, strategicAlignment: 20, leverage: 20 },
+      rationales: { impact: "Material.", costOfDelay: "Timely.", strategicAlignment: "Aligned.", leverage: "Unlocking." },
+      confidence: "high",
+      effort: "small",
+      clusterKey: "inbox-routine",
+      missingEvidence: [],
+      scoredAt: sourceCard.updatedAt,
+      scoredBy: "agent",
+      baseScore: 85,
+      recencyPenalty: 0,
+      score: 85,
+      stale: false,
+    } }],
+    sources: [],
+    policy: "This is a live projection.",
+  };
+  const targetChanges: Array<Record<string, unknown>> = [];
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    if (url === "/api/session") return Response.json({ mutationToken: "test-token" });
+    if (url === "/api/state?feed=top-priorities") return Response.json(state);
+    if (url === "/api/voice/target-change") {
+      const body = JSON.parse(String(init?.body));
+      targetChanges.push(body);
+      return Response.json(body.target);
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  }) as typeof fetch;
+
+  const rootRoute = createRootRoute();
+  const indexRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/",
+    component: () => <App feedId="top-priorities" screen="feed" workspaceTab="feed" />,
+  });
+  const router = createRouter({ routeTree: rootRoute.addChildren([indexRoute]), history: createMemoryHistory({ initialEntries: ["/"] }) });
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const view = render(<QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>);
+
+  expect(await view.findByLabelText("Instruction for Codex")).toBeTruthy();
+  expect(view.getByText("Talking to:")).toBeTruthy();
+  expect(view.getAllByText("Routine notice").length).toBeGreaterThan(0);
+  await waitFor(() => expect(targetChanges.length).toBeGreaterThan(0));
+  expect(targetChanges.at(-1)).toMatchObject({
+    feedId: "inbox",
+    target: { kind: "card", feedId: "inbox", cardId: "cleanup-card" },
+  });
+});
+
 function looseEndCard(): Card {
   return {
     id: "loose-end",

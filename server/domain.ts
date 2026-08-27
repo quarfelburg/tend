@@ -2871,6 +2871,7 @@ export class AttentionDomain {
 
   async requestCardChat(feedId: string, cardId: string): Promise<{
     threadId: string;
+    threadName: string;
     prompt: string;
     feedbackId: string;
   }> {
@@ -2909,7 +2910,12 @@ export class AttentionDomain {
           category: feedback.category,
         },
       });
-      return { threadId: thread.homeThreadId, prompt, feedbackId: feedback.id };
+      return {
+        threadId: thread.homeThreadId,
+        threadName: `${boundedText(card.title, 140)} (Tend > ${boundedText(config.name, 80)})`,
+        prompt,
+        feedbackId: feedback.id,
+      };
     });
   }
 

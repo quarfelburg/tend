@@ -250,7 +250,7 @@ describe("API routing and mutation hardening", () => {
     });
     expect(queued).toHaveLength(1);
     expect(queued[0]).toMatchObject({ threadId: "thread-codex-chat" });
-    expect(queued[0].threadName).toBe("Tend — Inbox");
+    expect(queued[0].threadName).toBe("Choose the launch route (Tend > Inbox)");
     expect(queued[0].prompt).toContain("Do not execute, approve, queue, send, publish, edit");
     expect(queued[0].prompt).toContain("Choose route A or route B.");
     expect(queued[0].prompt).toContain("Prepare the selected route after Hayden decides.");

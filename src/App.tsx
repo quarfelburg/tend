@@ -127,6 +127,13 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
   }, [feed]);
   const ladder = useMemo<VoiceTarget[]>(() => {
     if (!feed) return [{ kind: "attention" }];
+    if (screen === "feed" && isTopPriorities) return [
+      ...(activeCard ? [
+        { kind: "card" as const, feedId: activeCard.feedId, cardId: activeCard.id },
+        { kind: "feed" as const, feedId: activeCard.feedId },
+      ] : []),
+      { kind: "attention" },
+    ];
     if (screen === "feed") return [
       ...(activeCard ? [{ kind: "card" as const, feedId: feed.config.id, cardId: activeCard.id }] : []),
       { kind: "sweep", feedId: feed.config.id, ...(feed.sweep.currentBatchId ? { batchId: feed.sweep.currentBatchId } : {}) },
@@ -140,7 +147,9 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
       ? workspaceFocus
       : { kind: "feed" as const, feedId: feed.config.id };
     return focus.kind === "feed" ? [focus, { kind: "attention" }] : [focus, { kind: "feed", feedId: feed.config.id }, { kind: "attention" }];
-  }, [activeCard, feed, screen, workspaceFocus, workspaceTab]);
+  }, [activeCard, feed, isTopPriorities, screen, workspaceFocus, workspaceTab]);
+
+  const dockAnchorFeedId = isTopPriorities && activeCard ? activeCard.feedId : feed?.config.id ?? feedId;
 
   const changeFeed = (id: string) => {
     setTab("review");
@@ -185,14 +194,14 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
     setDockTarget(next);
     sessionStorage.setItem("attention.voiceTarget", JSON.stringify(next));
     setTargetVersion((current) => current + 1);
-    void post<VoiceTarget>("/api/voice/target-change", { feedId: feed?.config.id ?? feedId, target: next }).then((validated) => {
+    void post<VoiceTarget>("/api/voice/target-change", { feedId: dockAnchorFeedId, target: next }).then((validated) => {
       if (sameTarget(validated, next) || !sameTarget(dockTargetRef.current, next)) return;
       dockTargetRef.current = validated;
       setDockTarget(validated);
       sessionStorage.setItem("attention.voiceTarget", JSON.stringify(validated));
       setTargetVersion((current) => current + 1);
     }).catch((error) => showToast(error instanceof Error ? error.message : String(error)));
-  }, [feed?.config.id, feedId]);
+  }, [dockAnchorFeedId]);
 
   const selectDockTarget = useCallback((next: VoiceTarget) => {
     dockScopeExplicitlyChangedRef.current = true;
@@ -210,7 +219,7 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
       dockScopeExplicitlyChangedRef.current = false;
     }
     const candidate = screen === "feed" && dockScopeExplicitlyChangedRef.current && dockTarget?.kind === "card" && activeCard
-      ? { kind: "card" as const, feedId: feed.config.id, cardId: activeCard.id }
+      ? { kind: "card" as const, feedId: isTopPriorities ? activeCard.feedId : feed.config.id, cardId: activeCard.id }
       : dockTarget;
     const next = preferredTarget(candidate, ladder, dockScopeExplicitlyChangedRef.current);
     if (!sameTarget(next, dockTarget)) changeDockTarget(next);
@@ -231,9 +240,9 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
     void (async () => {
       try {
         const assignee = canRouteDockToClaude && routeDockToClaude ? "claude" : undefined;
-        const result = await post<VoiceInstructionResult>("/api/voice/instructions", { feedId: feed.config.id, target: dockTarget, instruction, assignee });
+        const result = await post<VoiceInstructionResult>("/api/voice/instructions", { feedId: dockAnchorFeedId, target: dockTarget, instruction, assignee });
         if (result.kind === "scoped_work") {
-          const queued = { feedId: feed.config.id, workId: result.work.id };
+          const queued = { feedId: result.work.feedId, workId: result.work.id };
           setUndoQueuedWork(queued);
           window.setTimeout(() => setUndoQueuedWork((current) => current?.workId === queued.workId ? null : current), 5_000);
           const agentName = agentLabel(effectiveWorkLane(result.work, feed.thread));
@@ -535,7 +544,7 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
           </div>
         </section>}
       </main>
-      {!isTopPriorities && <Dock state={state} feed={feed} target={resolvedDockTarget} ladder={ladder} targetVersion={targetVersion} canRouteToClaude={canRouteDockToClaude} routeToClaude={routeDockToClaude} onRouteToClaude={setRouteDockToClaude} onTarget={selectDockTarget} onSubmit={instruct} onRecollect={recollect} />}
+      <Dock state={state} feed={feed} target={resolvedDockTarget} ladder={ladder} targetVersion={targetVersion} canRouteToClaude={canRouteDockToClaude} routeToClaude={routeDockToClaude} onRouteToClaude={setRouteDockToClaude} onTarget={selectDockTarget} onSubmit={instruct} onRecollect={recollect} />
       {!isTopPriorities && <InspectorPanel value={inspector} state={state} onClose={() => setInspector(null)} onChanged={(next) => { if (next) changeFeed(next); void refresh(next); }} />}
       {toast && <div className="toast">{toast}{undoCardDisposition && <button onClick={() => undoCardDispositionAction(undoCardDisposition)}>Undo</button>}{undoQueuedWork && <button onClick={() => void withRefresh(() => post(`/api/feeds/${undoQueuedWork.feedId}/work/${undoQueuedWork.workId}/cancel`), "Instruction cancelled").then(() => setUndoQueuedWork(null))}>Undo</button>}{undoRevision && <button onClick={() => void withRefresh(() => post(`/api/revisions/${undoRevision}/revert`), "Revision restored").then(() => setUndoRevision(null))}>Undo</button>}</div>}
     </>
