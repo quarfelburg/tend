@@ -24,6 +24,7 @@ type VoiceInstructionResult =
   | { kind: "revision_proposal"; proposal: RevisionProposal };
 
 type ParkedClaudeWork = { work: WorkItemView; label: string };
+const TOP_PRIORITIES_FEED_ID = "top-priorities";
 
 export function parkedClaudeWorkItems(feed: FeedView, claudeLiveness: string): ParkedClaudeWork[] {
   if (claudeLiveness !== "offline") return [];
@@ -91,6 +92,7 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
   const workspaceQuery = useQuery({
     queryKey: ["workspace", feedId],
     queryFn: () => api<WorkspaceView>(`/api/state?feed=${encodeURIComponent(feedId)}`),
+    refetchInterval: 30_000,
   });
   const state = workspaceQuery.data ?? null;
   const refresh = useCallback(async (nextFeed = feedId) => {
@@ -103,6 +105,7 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
   );
 
   const feed = state?.active;
+  const isTopPriorities = feed?.config.id === TOP_PRIORITIES_FEED_ID;
   const canRouteDockToClaude = Boolean(feed?.thread.agents?.claude);
   const claudeLiveness = state?.agents?.claude.liveness ?? "offline";
   useEffect(() => {
@@ -304,19 +307,19 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
     void (async () => {
       try {
         await flushVisibleCardEdits(card);
-        const work = await post<{ id: string }>(`/api/feeds/${feed.config.id}/cards/${card.id}/actions/${encodeURIComponent(action.id)}`);
+        const work = await post<{ id: string }>(`/api/feeds/${card.feedId}/cards/${card.id}/actions/${encodeURIComponent(action.id)}`, isTopPriorities ? { surface: TOP_PRIORITIES_FEED_ID } : {});
         if (action.behavior === "dismiss_card") {
-          const dismissal: CardDispositionUndo = { kind: "dismiss", feedId: feed.config.id, cardId: card.id, operationId: crypto.randomUUID() };
+          const dismissal: CardDispositionUndo = { kind: "dismiss", feedId: card.feedId, cardId: card.id, operationId: crypto.randomUUID() };
           setUndoCardDisposition(dismissal);
           window.setTimeout(() => setUndoCardDisposition((current) => sameUndoRegistration(current, dismissal) ? null : current), 5_000);
           showToast("Card dismissed");
         } else if (action.behavior === "default_cleanup") {
-          const cleanup: CardDispositionUndo = { kind: "cleanup", feedId: feed.config.id, cardId: card.id, operationId: work.id };
+          const cleanup: CardDispositionUndo = { kind: "cleanup", feedId: card.feedId, cardId: card.id, operationId: work.id };
           setUndoCardDisposition(cleanup);
           window.setTimeout(() => setUndoCardDisposition((current) => sameUndoRegistration(current, cleanup) ? null : current), 5_000);
           showToast(`${action.label} queued for Codex`);
         } else {
-          const queued = { feedId: feed.config.id, workId: work.id };
+          const queued = { feedId: card.feedId, workId: work.id };
           setUndoQueuedWork(queued);
           window.setTimeout(() => setUndoQueuedWork((current) => current?.workId === queued.workId ? null : current), 5_000);
           showToast(`${action.label} queued for Codex`);
@@ -327,10 +330,27 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
       }
     })();
   };
+  const overridePriority = async (card: Card, input: NonNullable<Card["priority"]>) => {
+    try {
+      await post(`/api/priorities/${card.feedId}/${card.id}/override`, {
+        dimensions: input.dimensions,
+        rationales: input.rationales,
+        confidence: input.confidence,
+        effort: input.effort,
+        clusterKey: input.clusterKey,
+        missingEvidence: input.missingEvidence,
+      });
+      showToast("Priority score updated");
+      await refresh();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  };
   const chatAboutCard = async (card: Card) => {
     try {
-      const result = await post<{ codexUrl: string }>(`/api/feeds/${card.feedId}/cards/${card.id}/chat`);
-      showToast("Context added to the Codex task");
+      const result = await post<{ codexUrl: string; handoffMode?: "queued" | "started" }>(`/api/feeds/${card.feedId}/cards/${card.id}/chat`);
+      showToast(result.handoffMode === "started" ? "Discussion started in the Codex task" : "Context added to the Codex task");
       window.location.href = result.codexUrl;
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
@@ -431,27 +451,29 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
   const fresh = cards.filter((card) => card.status !== "to_review_updated");
   const feedWork = visibleFeedWork(feed, tab);
   const parkedClaudeWork = tab === "queued" ? parkedClaudeWorkItems(feed, claudeLiveness) : [];
+  const feedTabs: Tab[] = isTopPriorities ? ["review"] : ["review", "queued", "working", "done"];
   return withRealtime(
     <>
       <TopBar state={state} onFeed={changeFeed} onInspector={setInspector} onWorkspace={openWorkspace} />
       <nav className="tabs">
-        {(["review", "queued", "working", "done"] as Tab[]).map((item) => (
+        {feedTabs.map((item) => (
           <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>
             {item === "review" ? "To review" : item === "queued" ? queuedTabLabel : item === "working" ? "Working" : "Done"}
             <span>{countFor(feed, item)}</span>
           </button>
         ))}
-        <button className="tab-quiet" onClick={() => openWorkspace("feed")}>Prompts & sources</button>
+        {!isTopPriorities && <button className="tab-quiet" onClick={() => openWorkspace("feed")}>Prompts & sources</button>}
       </nav>
       <main className="page" ref={pageRef}>
         <RevisionProposals proposals={state.proposals} onApply={applyProposal} onReject={rejectProposal} onReviewLearning={openLearningReview} />
         {routineActions.map((group) => <RoutineActionGroupView key={group.id} group={group} onApprove={() => approveRoutineAction(group)} />)}
         <ParkedClaudeWorkNotice items={parkedClaudeWork} onReassign={reassignQueuedWork} />
-        {tab === "review" && updated.length > 0 && <div className="section-label">Back for review <span>{updated.length}</span></div>}
+        {isTopPriorities && <div className="priority-feed-intro"><b>Your current top ten</b><span>Scores are explainable, adjustable, and temporarily reduced when closely related work was just handled.</span></div>}
+        {!isTopPriorities && tab === "review" && updated.length > 0 && <div className="section-label">Back for review <span>{updated.length}</span></div>}
         {cards.map((card, index) => (
           <Fragment key={card.id}>
-            {tab === "review" && index === updated.length && fresh.length > 0 && <div className="section-label" key={`${card.id}-label`}>New <span>{fresh.length}</span></div>}
-            <CardView key={card.id} card={card} queuedFor={cardQueuedFor(card.id)} queuedNote={editableQueuedNote(card)} active={card.id === activeCard?.id} onActivate={() => setActiveCardId(card.id)} onChanged={() => void refresh()} onAction={(action) => runCardAction(card, action)} onChat={() => chatAboutCard(card)} onHeartbeatDisposition={(disposition, parkedUntil) => setHeartbeatDisposition(card, disposition, parkedUntil)} onReturnToReview={() => returnToReview(card)} />
+            {!isTopPriorities && tab === "review" && index === updated.length && fresh.length > 0 && <div className="section-label" key={`${card.id}-label`}>New <span>{fresh.length}</span></div>}
+            <CardView key={card.id} card={card} queuedFor={cardQueuedFor(card.id)} queuedNote={editableQueuedNote(card)} active={card.id === activeCard?.id} onActivate={() => setActiveCardId(card.id)} onChanged={() => void refresh()} onAction={(action) => runCardAction(card, action)} onChat={() => chatAboutCard(card)} onPriorityOverride={isTopPriorities ? (input) => overridePriority(card, input) : undefined} onHeartbeatDisposition={(disposition, parkedUntil) => setHeartbeatDisposition(card, disposition, parkedUntil)} onReturnToReview={() => returnToReview(card)} />
           </Fragment>
         ))}
         {feedWork.map((work) => (
@@ -513,8 +535,8 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
           </div>
         </section>}
       </main>
-      <Dock state={state} feed={feed} target={resolvedDockTarget} ladder={ladder} targetVersion={targetVersion} canRouteToClaude={canRouteDockToClaude} routeToClaude={routeDockToClaude} onRouteToClaude={setRouteDockToClaude} onTarget={selectDockTarget} onSubmit={instruct} onRecollect={recollect} />
-      <InspectorPanel value={inspector} state={state} onClose={() => setInspector(null)} onChanged={(next) => { if (next) changeFeed(next); void refresh(next); }} />
+      {!isTopPriorities && <Dock state={state} feed={feed} target={resolvedDockTarget} ladder={ladder} targetVersion={targetVersion} canRouteToClaude={canRouteDockToClaude} routeToClaude={routeDockToClaude} onRouteToClaude={setRouteDockToClaude} onTarget={selectDockTarget} onSubmit={instruct} onRecollect={recollect} />}
+      {!isTopPriorities && <InspectorPanel value={inspector} state={state} onClose={() => setInspector(null)} onChanged={(next) => { if (next) changeFeed(next); void refresh(next); }} />}
       {toast && <div className="toast">{toast}{undoCardDisposition && <button onClick={() => undoCardDispositionAction(undoCardDisposition)}>Undo</button>}{undoQueuedWork && <button onClick={() => void withRefresh(() => post(`/api/feeds/${undoQueuedWork.feedId}/work/${undoQueuedWork.workId}/cancel`), "Instruction cancelled").then(() => setUndoQueuedWork(null))}>Undo</button>}{undoRevision && <button onClick={() => void withRefresh(() => post(`/api/revisions/${undoRevision}/revert`), "Revision restored").then(() => setUndoRevision(null))}>Undo</button>}</div>}
     </>
   );

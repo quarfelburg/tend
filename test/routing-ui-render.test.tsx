@@ -47,6 +47,12 @@ function workspace(active = feed(), overrides: Partial<WorkspaceView> = {}): Wor
         sessionId: "session-a",
       },
     },
+    queueRunner: {
+      lastCheckedAt: new Date().toISOString(),
+      state: "empty",
+      lastProcessedAt: "2026-07-05T12:04:00.000Z",
+      lastProcessedStatus: "succeeded",
+    },
     dictation: {
       provider: null,
       status: "not_checked",
@@ -61,13 +67,24 @@ function workspace(active = feed(), overrides: Partial<WorkspaceView> = {}): Wor
   };
 }
 
-test("TopBar renders Claude presence liveness and label", () => {
+test("TopBar separates the latest queue check from the latest processed work", () => {
   const html = renderToStaticMarkup(
     <TopBar state={workspace()} onFeed={() => {}} />,
   );
 
-  expect(html).toContain("Claude live · Preview");
-  expect(html).toContain("tend-agent-live");
+  expect(html).toContain("Queue checked &lt;1 min ago · Empty");
+  expect(html).toContain("Last work");
+  expect(html).toContain("tend-status-empty");
+  expect(html).not.toContain("Claude live");
+});
+
+test("TopBar calls out a failed latest queue check", () => {
+  const html = renderToStaticMarkup(
+    <TopBar state={workspace(undefined, { queueRunner: { lastCheckedAt: new Date().toISOString(), state: "error" } })} onFeed={() => {}} />,
+  );
+
+  expect(html).toContain("Queue check failed");
+  expect(html).toContain("tend-status-error");
 });
 
 test("TopBar links every feed to the configured ClarityBoard", () => {

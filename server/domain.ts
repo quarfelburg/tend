@@ -22,6 +22,11 @@ import type {
   MindContextWorkspace,
   PolicyRevision,
   PostActionCompletion,
+  PriorityConfidence,
+  PriorityDimensions,
+  PriorityEffort,
+  PriorityRationales,
+  PriorityScoreRecord,
   ProposedAction,
   RevisionProposal,
   RoutineActionGroup,
@@ -1675,22 +1680,55 @@ export class AttentionDomain {
     return this.store.serialize(() => this.approveActionLocked(feedId, cardId, cardActionId));
   }
 
-  async runCardAction(feedId: string, cardId: string, cardActionId: string): Promise<WorkItem | Card> {
+  async runCardAction(feedId: string, cardId: string, cardActionId: string, options: { surface?: string } = {}): Promise<WorkItem | Card> {
     const card = await this.store.readCard(feedId, cardId);
     if (card.actions?.some((action) => action.id === cardActionId && isReservedCardActionId(action.id))) {
       throw new Error(`Card action id "${cardActionId}" is reserved by Tend.`);
     }
-    if (cardActionId === "default-cleanup") return this.queueSourceCleanup(feedId, cardId);
-    if (cardActionId === "dismiss-card") return this.dismissCard(feedId, cardId);
-    if (cardActionId === "proposed-action") return this.approveAction(feedId, cardId);
-    const action = card.actions?.find((item) => item.id === cardActionId);
-    if (!action) throw new Error("Card action not found.");
-    if (action.behavior === "default_cleanup") return this.queueSourceCleanup(feedId, cardId);
-    if (action.behavior === "dismiss_card") return this.dismissCard(feedId, cardId);
-    await this.assertCardSourceCurrent(card);
-    if (!action.instruction?.trim()) throw new Error("Card action instruction is required.");
-    if (action.behavior === "queue_instruction") return this.queueInstruction(feedId, cardId, action.instruction);
-    return this.approveAction(feedId, cardId, action.id);
+    const result = await (async (): Promise<WorkItem | Card> => {
+      if (cardActionId === "default-cleanup") return this.queueSourceCleanup(feedId, cardId);
+      if (cardActionId === "dismiss-card") return this.dismissCard(feedId, cardId);
+      if (cardActionId === "proposed-action") return this.approveAction(feedId, cardId);
+      const action = card.actions?.find((item) => item.id === cardActionId);
+      if (!action) throw new Error("Card action not found.");
+      if (action.behavior === "default_cleanup") return this.queueSourceCleanup(feedId, cardId);
+      if (action.behavior === "dismiss_card") return this.dismissCard(feedId, cardId);
+      await this.assertCardSourceCurrent(card);
+      if (!action.instruction?.trim()) throw new Error("Card action instruction is required.");
+      if (action.behavior === "queue_instruction") return this.queueInstruction(feedId, cardId, action.instruction);
+      return this.approveAction(feedId, cardId, action.id);
+    })();
+    if (options.surface === "top-priorities") await this.store.recordPriorityInteraction(feedId, cardId, cardActionId);
+    return result;
+  }
+
+  async scorePriorityCard(
+    feedId: string,
+    cardId: string,
+    input: {
+      dimensions: PriorityDimensions;
+      rationales: PriorityRationales;
+      confidence: PriorityConfidence;
+      effort: PriorityEffort;
+      clusterKey: string;
+      missingEvidence?: string[];
+    },
+    scoredBy: PriorityScoreRecord["scoredBy"] = "agent",
+  ): Promise<PriorityScoreRecord> {
+    const card = await this.store.readCard(feedId, cardId);
+    return this.store.writePriorityScore({
+      feedId,
+      cardId,
+      sourceUpdatedAt: card.updatedAt,
+      dimensions: input.dimensions,
+      rationales: input.rationales,
+      confidence: input.confidence,
+      effort: input.effort,
+      clusterKey: input.clusterKey,
+      ...(input.missingEvidence?.length ? { missingEvidence: input.missingEvidence } : {}),
+      scoredAt: isoNow(),
+      scoredBy,
+    });
   }
 
   // Queue the feed's configured source cleanup as verified work. This can mutate the source

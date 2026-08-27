@@ -454,7 +454,7 @@ describe("filesystem workspace", () => {
   test("creates Inbox as the visible default while preserving the dormant Company recipe", async () => {
     const { root, store, domain } = await setup();
     const workspace = await store.readWorkspace();
-    expect(workspace.feeds.map((feed) => feed.id)).toEqual(["inbox"]);
+    expect(workspace.feeds.map((feed) => feed.id)).toEqual(["top-priorities", "inbox"]);
     expect(workspace.active.sources[0].id).toBe("gmail-inbox");
     expect(workspace.active.cards[0].id).toBe("inbox-ready-to-collect");
     expect(workspace.dictation.status).toBe("not_checked");
@@ -468,6 +468,35 @@ describe("filesystem workspace", () => {
     expect(await readFile(path.join(root, "prompts", "execute-work.md"), "utf8")).toContain("write as the owner of `sourceMailbox`");
   });
 
+  test("projects original review cards by score and temporarily diminishes related follow-ons", async () => {
+    const { store, domain } = await setup();
+    for (const [id, title] of [["launch-first", "Choose the launch cycle"], ["launch-next", "Prepare the chosen launch cycle"], ["unrelated", "Review the hiring decision"]]) {
+      await domain.upsertCard("inbox", { id, title, why: "A founder decision is ready.", blocks: [] });
+    }
+    const score = (impact: number, clusterKey: string) => ({
+      dimensions: { impact, costOfDelay: 20, strategicAlignment: 20, leverage: 20 },
+      rationales: { impact: "Material result.", costOfDelay: "Waiting has a cost.", strategicAlignment: "Matches the current strategy.", leverage: "Unlocks later work." },
+      confidence: "high" as const,
+      effort: "small" as const,
+      clusterKey,
+    });
+    await domain.scorePriorityCard("inbox", "launch-first", score(35, "launch-cycle"));
+    await domain.scorePriorityCard("inbox", "launch-next", score(25, "launch-cycle"));
+    await domain.scorePriorityCard("inbox", "unrelated", score(30, "hiring"));
+
+    let projected = await store.readWorkspace("top-priorities");
+    expect(projected.active.cards.slice(0, 3).map((card) => card.id)).toEqual(["launch-first", "unrelated", "launch-next"]);
+    expect(projected.active.cards[0].priority?.sourceFeedName).toBe("Inbox");
+
+    await domain.runCardAction("inbox", "launch-first", "dismiss-card", { surface: "top-priorities" });
+    expect((await store.readCard("inbox", "launch-first")).status).toBe("done");
+    projected = await store.readWorkspace("top-priorities");
+    const followOn = projected.active.cards.find((card) => card.id === "launch-next");
+    expect(projected.active.cards[0].id).toBe("unrelated");
+    expect(followOn?.priority?.recencyPenalty).toBe(5);
+    expect(followOn?.priority?.penaltyReason).toContain("high delay cost");
+  });
+
   test("loads safe operator workspace links while dropping malformed entries", async () => {
     const { root, store } = await setup();
     await writeFile(path.join(root, "workspace-links.json"), JSON.stringify([
@@ -479,6 +508,31 @@ describe("filesystem workspace", () => {
     expect((await store.readWorkspace()).links).toEqual([
       { id: "clarityboard", label: "ClarityBoard", href: "/review-artifacts/clarityboard.html" },
     ]);
+  });
+
+  test("loads the latest queue check and processed run from a harness-neutral status file", async () => {
+    const { root, store } = await setup();
+    const statusPath = path.join(root, "queue-status.json");
+    await mkdir(path.join(root, "integrations"), { recursive: true });
+    await writeFile(path.join(root, "integrations", "queue-runner.json"), JSON.stringify({
+      statusPath,
+      laneId: "tend-queue-drain",
+    }));
+    await writeFile(statusPath, JSON.stringify({
+      schemaVersion: 1,
+      lane: "tend-queue-drain",
+      lastCheckedAt: "2026-07-05T12:02:05.000Z",
+      state: "empty",
+      lastProcessedAt: "2026-07-05T12:01:03.000Z",
+      lastProcessedStatus: "succeeded",
+    }));
+
+    expect((await store.readWorkspace()).queueRunner).toEqual({
+      lastCheckedAt: "2026-07-05T12:02:05.000Z",
+      state: "empty",
+      lastProcessedAt: "2026-07-05T12:01:03.000Z",
+      lastProcessedStatus: "succeeded",
+    });
   });
 
   test("lets Codex detect Monologue and persist its configured recording shortcut", async () => {

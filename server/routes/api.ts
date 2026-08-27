@@ -4,7 +4,7 @@ import path from "node:path";
 import { artifactType } from "../artifacts";
 import { parseOptionalWorkAgent } from "../../shared/lanes";
 import type { PostActionCompletion, VoiceTarget } from "../../shared/types";
-import { mindContextPublicationReceipt } from "../domain";
+import { mindContextPublicationReceipt, type AttentionDomain } from "../domain";
 import { versionInfo } from "../version";
 import { body, mutation, mutationAccessError, type LocalRouteContext } from "./shared";
 
@@ -171,16 +171,33 @@ export function apiRoutes(context: LocalRouteContext): Hono {
   }));
   app.post("/api/feeds/:feed/work/:work/retry", async (c) => mutation(c, notify, async () => domain.retryApprovedWork(c.req.param("feed"), c.req.param("work"))));
   app.post("/api/feeds/:feed/routine-actions/:group/approve", async (c) => mutation(c, notify, async () => domain.approveRoutineActionGroup(c.req.param("feed"), c.req.param("group"))));
-  app.post("/api/feeds/:feed/cards/:card/actions/:action", async (c) => mutation(c, notify, async () => domain.runCardAction(c.req.param("feed"), c.req.param("card"), c.req.param("action"))));
+  app.post("/api/feeds/:feed/cards/:card/actions/:action", async (c) => mutation(c, notify, async () => {
+    const input = await body(c);
+    return domain.runCardAction(c.req.param("feed"), c.req.param("card"), c.req.param("action"), {
+      surface: typeof input.surface === "string" ? input.surface : undefined,
+    });
+  }));
+  app.post("/api/priorities/:feed/:card/override", async (c) => mutation(c, notify, async () => {
+    const input = await body(c);
+    return domain.scorePriorityCard(c.req.param("feed"), c.req.param("card"), input as Parameters<AttentionDomain["scorePriorityCard"]>[2], "hayden");
+  }));
   app.post("/api/feeds/:feed/cards/:card/chat", async (c) => mutation(c, notify, async () => {
     if (!queueCodexThreadMessage) throw new Error("The Codex task-chat bridge is unavailable.");
-    const handoff = await domain.requestCardChat(c.req.param("feed"), c.req.param("card"));
+    const feedId = c.req.param("feed");
+    const handoff = await domain.requestCardChat(feedId, c.req.param("card"));
     try {
-      const queued = await queueCodexThreadMessage({ threadId: handoff.threadId, prompt: handoff.prompt });
+      const config = await store.readConfig(feedId);
+      const queued = await queueCodexThreadMessage({
+        threadId: handoff.threadId,
+        threadName: `Tend — ${config.name}`,
+        prompt: handoff.prompt,
+      });
+      if (queued.threadId !== handoff.threadId) await domain.bindFeed(feedId, queued.threadId);
       return {
         feedbackId: handoff.feedbackId,
         queuedSubmissionId: queued.queuedSubmissionId,
-        codexUrl: `codex://threads/${encodeURIComponent(handoff.threadId)}`,
+        handoffMode: queued.mode,
+        codexUrl: `codex://threads/${encodeURIComponent(queued.threadId)}`,
       };
     } catch (error) {
       await domain.recordCardChatHandoffFailure(

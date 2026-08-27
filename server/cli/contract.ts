@@ -59,6 +59,8 @@ export const CLI_COMMANDS = [
 ] as const;
 
 export const INTERNAL_CLI_COMMANDS = [
+  "priority:list-unscored",
+  "priority:score --feed <id> --card <id> (--score <json> | --score-file <path>)",
   "legacy:import-attention-card --feed <id> --path <attention-batch-json> --card-id <id>",
   "legacy:import-inbox-card --feed inbox --path <inbox-sweep-brief-json> --card-id <id> [--mailbox <received-at-email>]",
 ] as const;

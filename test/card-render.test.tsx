@@ -76,6 +76,33 @@ test("renders collapsible card blocks closed unless defaultOpen is set", () => {
   expect(html).toContain('<details class="block-collapsible block-collapsible-memo" open="">');
 });
 
+test("uses an interview question as the next thing instead of recommending dismissal", () => {
+  const question = "Which real example should anchor this story? Name the company or say that it should be anonymized.";
+  const card: Card = {
+    id: "interview-question",
+    feedId: "content-creation",
+    kind: "attention",
+    status: "to_review_new",
+    title: "Start the evidence interview",
+    eyebrow: "Content Creation",
+    why: "The package is waiting for one answer.",
+    blocks: [
+      { id: "stage", type: "memo", label: "Stage", text: "3 of 8 · Data-injection interview" },
+      { id: "next", type: "memo", label: "Next", text: question },
+    ],
+    actions: [],
+    readyForPass: 1,
+    createdAt: "2026-08-26T12:00:00.000Z",
+    updatedAt: "2026-08-26T12:00:00.000Z",
+    history: [],
+  };
+
+  const html = renderToStaticMarkup(<CardView card={card} onChanged={() => {}} />);
+
+  expect(html).toContain(question);
+  expect(html).not.toContain("Dismiss card. Codex should use the card&#x27;s recommended task");
+});
+
 test("keeps decision, risk, and source sections collapsed even when card data omits the flags", () => {
   const card: Card = {
     id: "semantic-review-expanders",

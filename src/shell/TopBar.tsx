@@ -2,6 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import type { Inspector, WorkspaceTab } from "../app/types";
 import type { WorkspaceView } from "../types";
 
+function relativeAge(timestamp: string, now: number): string {
+  const ageMs = Math.max(0, now - Date.parse(timestamp));
+  if (ageMs < 60_000) return "<1 min ago";
+  if (ageMs < 60 * 60_000) return `${Math.floor(ageMs / 60_000)} min ago`;
+  if (ageMs < 24 * 60 * 60_000) return `${Math.floor(ageMs / (60 * 60_000))}h ago`;
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(timestamp));
+}
+
 export function TopBar({
   state,
   title = state.active.config.name,
@@ -20,16 +28,32 @@ export function TopBar({
   onWorkspace?: (tab?: WorkspaceTab) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const menuRef = useRef<HTMLDivElement>(null);
-  const claude = state.agents?.claude ?? { liveness: "offline" as const, lastSeenAt: null };
-  const showClaudeChip = Boolean(state.agents?.claude?.lastSeenAt || state.agents?.claude?.sessionId || state.active.thread.agents?.claude);
-  const claudeLabel = claude.label ? `Claude ${claude.liveness} · ${claude.label}` : `Claude ${claude.liveness}`;
+  const queueRunner = state.queueRunner;
+  const queueCheckAge = queueRunner ? relativeAge(queueRunner.lastCheckedAt, now) : null;
+  const queueCheckLabel = queueRunner?.state === "processing"
+    ? "Queue processing now"
+    : queueRunner?.state === "error"
+      ? `Queue check failed · ${queueCheckAge}`
+      : queueRunner?.state === "inactive"
+        ? "Queue inactive"
+        : queueRunner?.state === "processed"
+          ? `Queue checked ${queueCheckAge} · Work processed`
+          : `Queue checked ${queueCheckAge} · Empty`;
+  const lastProcessedTime = queueRunner?.lastProcessedAt
+    ? new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(queueRunner.lastProcessedAt))
+    : null;
   const workspaceLinks = (state.links ?? []).map((link) => ({
     ...link,
     href: link.href.startsWith("/review-artifacts/") && typeof window !== "undefined"
       ? `${link.href}?returnTo=${encodeURIComponent(`${window.location.pathname}${window.location.search}`)}`
       : link.href,
   }));
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: PointerEvent) => {
@@ -42,9 +66,14 @@ export function TopBar({
     <div className="feed-bar" ref={menuRef}>
       <button className="menu-trigger" onClick={() => setOpen(!open)} aria-label="Open feed navigation">☰</button>
       <strong>{title}</strong>
-      {showClaudeChip && (
-        <span className={`tend-agent-chip tend-agent-${claude.liveness}`} title={claude.lastSeenAt ? `Last seen ${claude.lastSeenAt}` : "No Claude presence yet"}>
-          {claudeLabel}
+      {queueRunner && (
+        <span className={`tend-status-chip tend-status-${queueRunner.state}`} title={`Queue last checked at ${queueRunner.lastCheckedAt}`}>
+          {queueCheckLabel}
+        </span>
+      )}
+      {lastProcessedTime && (
+        <span className={`tend-status-chip tend-status-secondary tend-status-${queueRunner?.lastProcessedStatus ?? "succeeded"}`} title={`Work last processed at ${queueRunner?.lastProcessedAt}`}>
+          Last work · {lastProcessedTime}
         </span>
       )}
       {workspaceLinks.length > 0 && <nav className="workspace-links" aria-label="Workspace links">

@@ -91,6 +91,13 @@ export interface WorkspaceAgentSummary {
   };
 }
 
+export interface QueueRunnerSummary {
+  lastCheckedAt: string;
+  state: "empty" | "processing" | "processed" | "error" | "inactive";
+  lastProcessedAt?: string;
+  lastProcessedStatus?: "succeeded" | "failed";
+}
+
 export interface DrainState {
   status: "idle" | "running";
   lastDispatchedAt?: string;
@@ -300,6 +307,46 @@ export interface CardContextInfluence {
   sourceCount?: number;
 }
 
+export type PriorityConfidence = "low" | "medium" | "high";
+export type PriorityEffort = "small" | "medium" | "large";
+
+export interface PriorityDimensions {
+  impact: number;
+  costOfDelay: number;
+  strategicAlignment: number;
+  leverage: number;
+}
+
+export interface PriorityRationales {
+  impact: string;
+  costOfDelay: string;
+  strategicAlignment: string;
+  leverage: string;
+}
+
+export interface PriorityScoreRecord {
+  feedId: FeedId;
+  cardId: string;
+  sourceUpdatedAt: string;
+  dimensions: PriorityDimensions;
+  rationales: PriorityRationales;
+  confidence: PriorityConfidence;
+  effort: PriorityEffort;
+  clusterKey: string;
+  missingEvidence?: string[];
+  scoredAt: string;
+  scoredBy: "agent" | "hayden";
+}
+
+export interface CardPriorityView extends PriorityScoreRecord {
+  sourceFeedName: string;
+  baseScore: number;
+  recencyPenalty: number;
+  score: number;
+  penaltyReason?: string;
+  stale: boolean;
+}
+
 export interface Card {
   id: string;
   feedId: FeedId;
@@ -311,6 +358,8 @@ export interface Card {
   sourceMailbox?: string;
   sourceRunIds?: string[];
   contextInfluence?: CardContextInfluence;
+  // Projection-only metadata. This is never persisted into the source card.
+  priority?: CardPriorityView;
   blocks: CardBlock[];
   proposedAction?: ProposedAction;
   actions?: CardAction[];
@@ -568,6 +617,7 @@ export interface WorkspaceView {
   active: FeedView;
   links?: Array<{ id: string; label: string; href: string }>;
   agents?: WorkspaceAgentSummary;
+  queueRunner?: QueueRunnerSummary;
   dictation: DictationCapability;
   proposals: RevisionProposal[];
 }

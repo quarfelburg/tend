@@ -50,7 +50,7 @@ app.route("/", apiRoutes({
   root,
   sqlite,
   store,
-  queueCodexThreadMessage: ({ threadId, prompt }) => queueAppServerMessage({ threadId, prompt, cwd: root }),
+  queueCodexThreadMessage: ({ threadId, threadName, prompt }) => queueAppServerMessage({ threadId, threadName, prompt, cwd: root }),
 }));
 app.route("/", realtime.routes());
 app.route("/", assetRoutes(clientDir));

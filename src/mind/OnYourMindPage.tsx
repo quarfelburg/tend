@@ -227,6 +227,7 @@ export function OnYourMindPage() {
   const workspaceQuery = useQuery({
     queryKey: ["workspace", "mind-navigation"],
     queryFn: () => api<WorkspaceView>("/api/state?feed=inbox"),
+    refetchInterval: 30_000,
   });
   const mindQuery = useQuery({
     queryKey: ["mind-context"],

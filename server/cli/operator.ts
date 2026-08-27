@@ -209,6 +209,18 @@ export async function runOperatorCli(rawArgs: string[]): Promise<void> {
           required("group"),
         );
         break;
+      case "priority:list-unscored":
+        output = (await store.listPriorityScoringCandidates()).filter(({ card, currentScore }) =>
+          !currentScore || currentScore.sourceUpdatedAt !== card.updatedAt
+        );
+        break;
+      case "priority:score":
+        output = await domain.scorePriorityCard(
+          required("feed"),
+          required("card"),
+          await structured("score"),
+        );
+        break;
       case "legacy:import-attention-card": {
         output = await importLegacyAttentionCard(domain, { required, value });
         break;

@@ -29,6 +29,7 @@ export interface AppServerDrainOptions {
 
 export interface AppServerQueuedMessageOptions {
   threadId: string;
+  threadName?: string;
   prompt: string;
   cwd: string;
   controlSocket?: string | null;
@@ -36,6 +37,12 @@ export interface AppServerQueuedMessageOptions {
   log?: (line: string) => void | Promise<void>;
   argv?: string[];
 }
+
+export type AppServerTaskChatHandoff = {
+  queuedSubmissionId: string;
+  mode: "queued" | "started";
+  threadId: string;
+};
 
 interface Pending {
   resolve: (value: unknown) => void;
@@ -50,7 +57,24 @@ export function appServerArgv(controlSocket: string | null | undefined): string[
   return command;
 }
 
-export async function queueAppServerMessage(options: AppServerQueuedMessageOptions): Promise<{ queuedSubmissionId: string }> {
+function queueAddUnavailable(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+  return normalized.includes("thread/queue/add") && (
+    normalized.includes("experimentalapi")
+    || normalized.includes("experimental api")
+    || normalized.includes("method not found")
+    || normalized.includes("-32600")
+  );
+}
+
+function archivedThread(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+  return normalized.includes("is archived") && normalized.includes("unarchive");
+}
+
+export async function queueAppServerMessage(options: AppServerQueuedMessageOptions): Promise<AppServerTaskChatHandoff> {
   const log = options.log ?? (() => {});
   const argv = options.argv ?? appServerArgv(options.controlSocket);
   const timeoutMs = options.timeoutMs ?? 10_000;
@@ -115,28 +139,95 @@ export async function queueAppServerMessage(options: AppServerQueuedMessageOptio
   ]);
 
   try {
-    await withTimeout(request("initialize", { clientInfo: { name: "tend_task_chat", title: "Tend task chat", version: "0.1.0" } }));
+    await withTimeout(request("initialize", {
+      clientInfo: { name: "tend_task_chat", title: "Tend task chat", version: "0.1.0" },
+      capabilities: { experimentalApi: true },
+    }));
     send({ method: "initialized" });
-    const result = await withTimeout(request("thread/queue/add", {
+    const unarchiveAndRetry = async <T>(operation: () => Promise<T>, error: unknown): Promise<T> => {
+      if (!archivedThread(error)) throw error;
+      await log(`[app-server] bound task ${options.threadId} is archived; restoring it before opening the conversation`);
+      await withTimeout(request("thread/unarchive", { threadId: options.threadId }));
+      return operation();
+    };
+    const addToQueue = () => withTimeout(request("thread/queue/add", {
       threadId: options.threadId,
       clientUserMessageId: randomUUID(),
       input: [{ type: "text", text: options.prompt }],
-    })) as { queuedSubmission?: { id?: string } };
-    const queuedSubmissionId = result.queuedSubmission?.id;
-    if (!queuedSubmissionId) throw new Error("Codex did not confirm the queued conversation context.");
-    return { queuedSubmissionId };
+    })) as Promise<{ queuedSubmission?: { id?: string } }>;
+    const injectContext = (threadId: string) => withTimeout(request("thread/inject_items", {
+      threadId,
+      items: [{
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: options.prompt }],
+      }],
+    }));
+    const resumeThread = (threadId: string) => withTimeout(request("thread/resume", {
+      threadId,
+      cwd: options.cwd,
+      approvalPolicy: "never",
+      persistExtendedHistory: false,
+    }));
+    const startReplacementThread = async (): Promise<string> => {
+      await log(`[app-server] bound task ${options.threadId} is archived; creating a fresh active conversation to avoid stale desktop archive state`);
+      const result = await withTimeout(request("thread/start", {
+        cwd: options.cwd,
+        approvalPolicy: "on-request",
+        sandbox: "workspace-write",
+      })) as { thread?: { id?: string } };
+      const threadId = result.thread?.id;
+      if (!threadId) throw new Error("Codex did not return the replacement task ID.");
+      if (options.threadName) {
+        await withTimeout(request("thread/name/set", { threadId, name: options.threadName }));
+      }
+      return threadId;
+    };
+    const injectIntoSavedThread = async (): Promise<string> => {
+      let threadId = options.threadId;
+      try {
+        await resumeThread(threadId);
+      } catch (error) {
+        if (!archivedThread(error)) throw error;
+        threadId = await startReplacementThread();
+      }
+      await injectContext(threadId);
+      return threadId;
+    };
+    if (options.argv === undefined && !argv.includes("proxy")) {
+      await log("[app-server] no persistent desktop control bridge is available; injecting context into the saved task without starting an agent turn");
+      const threadId = await injectIntoSavedThread();
+      return { queuedSubmissionId: randomUUID(), mode: "queued", threadId };
+    }
+    try {
+      const result = await addToQueue().catch((error) => unarchiveAndRetry(addToQueue, error));
+      const queuedSubmissionId = result.queuedSubmission?.id;
+      if (!queuedSubmissionId) throw new Error("Codex did not confirm the queued conversation context.");
+      return { queuedSubmissionId, mode: "queued", threadId: options.threadId };
+    } catch (error) {
+      if (!queueAddUnavailable(error)) throw error;
+      await log("[app-server] quiet task-chat queue is unavailable; injecting the context without starting an agent turn");
+      const threadId = await injectIntoSavedThread();
+      return { queuedSubmissionId: randomUUID(), mode: "queued", threadId };
+    }
   } finally {
     try {
       child.stdin.end();
     } catch {
       // Already closed.
     }
-    try {
-      child.kill();
-    } catch {
-      // Already gone.
+    const exitedGracefully = await Promise.race([
+      child.exited.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2_000)),
+    ]);
+    if (!exitedGracefully) {
+      try {
+        child.kill();
+      } catch {
+        // Already gone.
+      }
+      await Promise.race([child.exited, new Promise((resolve) => setTimeout(resolve, 500))]);
     }
-    await Promise.race([child.exited, new Promise((resolve) => setTimeout(resolve, 2_000))]);
     await Promise.allSettled([readStdout, readStderr]);
   }
 }

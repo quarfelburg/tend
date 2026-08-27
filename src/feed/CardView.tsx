@@ -233,6 +233,7 @@ function recommendedTaskSummary(card: Card, blocks: CardBlock[], actions: CardAc
       ? summary
       : `${summary.replace(/[.!?]*$/, ".")} Codex should stop at the approval boundary stated in this card.`;
   }
+  if (nextSource) return sentenceSummary(nextSource);
   const label = card.proposedAction?.label ?? actions.find((action) => action.variant === "primary")?.label ?? actions[0]?.label;
   return label ? `${label}. Codex should use the card's recommended task and stop at its stated approval boundary.` : undefined;
 }
@@ -463,6 +464,71 @@ function ContextInfluenceReceipt({ card }: { card: Card }) {
   );
 }
 
+function PriorityScorePanel({ card, onOverride }: { card: Card; onOverride?: (input: NonNullable<Card["priority"]>) => Promise<void> }) {
+  const priority = card.priority;
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [dimensions, setDimensions] = useState(priority?.dimensions);
+  const [confidence, setConfidence] = useState(priority?.confidence);
+  const [effort, setEffort] = useState(priority?.effort);
+  if (!priority || !dimensions || !confidence || !effort) return null;
+  const fields = [
+    ["impact", "Impact", 35],
+    ["costOfDelay", "Cost of delay", 25],
+    ["strategicAlignment", "Strategic alignment", 20],
+    ["leverage", "Leverage", 20],
+  ] as const;
+  const save = async () => {
+    if (!onOverride) return;
+    setSaving(true);
+    try {
+      await onOverride({ ...priority, dimensions, confidence, effort, scoredBy: "hayden" });
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <section className="priority-score" onClick={(event) => event.stopPropagation()}>
+      <div className="priority-score-summary">
+        <div><span className="action-label">Priority score</span><strong>{priority.score}</strong><small> / 100</small></div>
+        <div className="priority-meta">
+          <span>{priority.sourceFeedName}</span>
+          <span>{priority.confidence} confidence</span>
+          <span>{priority.effort} effort</span>
+          {priority.stale && <span>score refresh pending</span>}
+        </div>
+      </div>
+      {priority.recencyPenalty > 0 && <p className="priority-penalty">Base {priority.baseScore} − {priority.recencyPenalty} temporary repetition adjustment. {priority.penaltyReason}</p>}
+      <details>
+        <summary>See score breakdown</summary>
+        <div className="priority-breakdown">
+          {fields.map(([key, label, max]) => (
+            <div key={key}>
+              <b>{label}: {priority.dimensions[key]} / {max}</b>
+              <p>{priority.rationales[key]}</p>
+            </div>
+          ))}
+          {priority.missingEvidence?.length ? <div><b>Missing evidence</b><ul>{priority.missingEvidence.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
+        </div>
+      </details>
+      {onOverride && !editing && <button className="priority-adjust" type="button" onClick={() => setEditing(true)}>Adjust score</button>}
+      {editing && (
+        <div className="priority-editor">
+          <div className="priority-dimension-inputs">
+            {fields.map(([key, label, max]) => (
+              <label key={key}>{label}<input aria-label={`${label} score`} type="number" min="0" max={max} value={dimensions[key]} onChange={(event) => setDimensions({ ...dimensions, [key]: Number(event.currentTarget.value) })} /></label>
+            ))}
+          </div>
+          <label>Confidence<select value={confidence} onChange={(event) => setConfidence(event.currentTarget.value as typeof confidence)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
+          <label>Effort<select value={effort} onChange={(event) => setEffort(event.currentTarget.value as typeof effort)}><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label>
+          <div className="action-buttons"><button className="button ghost" type="button" onClick={() => setEditing(false)}>Cancel</button><button className="button primary" disabled={saving} type="button" onClick={() => void save()}>{saving ? "Saving…" : "Save score"}</button></div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function CardView({
   card,
   queuedNote,
@@ -471,6 +537,7 @@ export function CardView({
   onChanged,
   onAction,
   onChat = async () => {},
+  onPriorityOverride,
   onHeartbeatDisposition,
   onReturnToReview,
   queuedFor,
@@ -482,6 +549,7 @@ export function CardView({
   onChanged: () => void;
   onAction: (action: CardAction) => void;
   onChat?: () => Promise<void>;
+  onPriorityOverride?: (input: NonNullable<Card["priority"]>) => Promise<void>;
   onHeartbeatDisposition?: (disposition: HeartbeatCardDispositionKind, parkedUntil?: string) => void;
   onReturnToReview: () => void;
   queuedFor?: string;
@@ -506,6 +574,7 @@ export function CardView({
         </div>
       </header>
       <p className="why"><FormattedText text={card.why} /></p>
+      <PriorityScorePanel card={card} onOverride={onPriorityOverride} />
       <ContextInfluenceReceipt card={card} />
       <CardHistory card={card} />
       <div className="blocks">

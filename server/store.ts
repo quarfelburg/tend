@@ -17,6 +17,8 @@ import type {
   MindContextBinding,
   MindContextUpdate,
   PolicyRevision,
+  PriorityDimensions,
+  PriorityScoreRecord,
   RevisionProposal,
   RoutineActionGroup,
   SourceRun,
@@ -66,6 +68,16 @@ export const AGENT_PRESENCE_STALE_AFTER_MS = 90_000;
 export const AGENT_PRESENCE_OFFLINE_AFTER_MS = 10 * 60_000;
 export const MAX_AGENT_WAKE_LEDGER_BYTES = 512 * 1024;
 const DEFAULT_FEED_IDS = ["inbox", "company-attention"];
+export const TOP_PRIORITIES_FEED_ID = "top-priorities";
+const TOP_PRIORITIES_LIMIT = 10;
+
+interface PriorityInteraction {
+  at: string;
+  feedId: string;
+  cardId: string;
+  clusterKey: string;
+  actionId: string;
+}
 
 type AtomicRunner = <T>(callback: () => Promise<T>) => Promise<T>;
 
@@ -159,15 +171,23 @@ export class AttentionStore {
     await this.init();
     const feedIds = await this.workspaceFeeds.listFeedIds();
     const configs = await Promise.all(feedIds.map((id) => this.readConfig(id)));
-    const feeds = configs
+    const feeds = [
+      {
+        id: TOP_PRIORITIES_FEED_ID,
+        name: "Top Priorities",
+        purpose: "The ten highest-priority cards currently ready for your review across Tend.",
+      },
+      ...configs
       .filter((config) => !config.hidden)
-      .map((config) => ({ id: config.id, name: config.name, purpose: config.purpose }));
-    const selected = feedIds.includes(feedId) ? feedId : feedIds[0];
+      .map((config) => ({ id: config.id, name: config.name, purpose: config.purpose })),
+    ];
+    const selected = feedId === TOP_PRIORITIES_FEED_ID || feedIds.includes(feedId) ? feedId : feedIds[0];
     return {
       feeds,
       active: await this.readFeed(selected),
       links: await this.readWorkspaceLinks(),
       agents: await this.readWorkspaceAgents(),
+      queueRunner: await this.readQueueRunner(),
       dictation: await this.readDictationCapability(),
       proposals: await this.readRevisionProposals(selected),
     };
@@ -212,6 +232,41 @@ export class AttentionStore {
     } catch {
       return [];
     }
+  }
+
+  private async readQueueRunner(): Promise<WorkspaceView["queueRunner"]> {
+    const configFile = this.path("integrations/queue-runner.json");
+    if (!existsSync(configFile)) return undefined;
+    try {
+      const config = await readJson<unknown>(configFile);
+      if (!config || typeof config !== "object") return undefined;
+      const candidate = config as Record<string, unknown>;
+      const statusPath = typeof candidate.statusPath === "string" ? candidate.statusPath.trim() : "";
+      const laneId = typeof candidate.laneId === "string" ? candidate.laneId.trim() : "";
+      if (!path.isAbsolute(statusPath) || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(laneId)) return undefined;
+
+      const status = await readJson<unknown>(statusPath);
+      if (!status || typeof status !== "object") return undefined;
+      const entry = status as Record<string, unknown>;
+      const states = new Set(["empty", "processing", "processed", "error", "inactive"]);
+      if (entry.lane !== laneId || typeof entry.lastCheckedAt !== "string" || !states.has(entry.state as string)) return undefined;
+      if (!Number.isFinite(Date.parse(entry.lastCheckedAt))) return undefined;
+      const lastProcessedAt = typeof entry.lastProcessedAt === "string" && Number.isFinite(Date.parse(entry.lastProcessedAt))
+        ? entry.lastProcessedAt
+        : undefined;
+      const lastProcessedStatus = entry.lastProcessedStatus === "succeeded" || entry.lastProcessedStatus === "failed"
+        ? entry.lastProcessedStatus
+        : undefined;
+      return {
+        lastCheckedAt: entry.lastCheckedAt,
+        state: entry.state as NonNullable<WorkspaceView["queueRunner"]>["state"],
+        ...(lastProcessedAt ? { lastProcessedAt } : {}),
+        ...(lastProcessedStatus ? { lastProcessedStatus } : {}),
+      };
+    } catch {
+      // The queue runner is an optional local integration. Tend remains usable if its status is unavailable.
+    }
+    return undefined;
   }
 
   async readMindContextBinding(): Promise<MindContextBinding> {
@@ -380,6 +435,7 @@ export class AttentionStore {
   }
 
   async readFeed(feedId: string): Promise<FeedView> {
+    if (feedId === TOP_PRIORITIES_FEED_ID) return this.readTopPrioritiesFeed();
     const config = await this.readConfig(feedId);
     const [thread, sourceRecords, policy, cards, runs, routineActions, work, sweep, drain] = await Promise.all([
       readJson<ThreadBinding>(this.feedPath(feedId, "thread.json")),
@@ -409,6 +465,169 @@ export class AttentionStore {
       drain,
       // Review cards now surface immediately. Keep this legacy field for API compatibility while
       // older clients migrate away from the manual next-pass interaction.
+      readyNextPass: 0,
+    };
+  }
+
+  private priorityScoresPath(): string {
+    return this.path("priorities", "scores.json");
+  }
+
+  private priorityInteractionsPath(): string {
+    return this.path("priorities", "interactions.json");
+  }
+
+  private priorityKey(feedId: string, cardId: string): string {
+    return `${feedId}/${cardId}`;
+  }
+
+  async readPriorityScores(): Promise<Record<string, PriorityScoreRecord>> {
+    const file = this.priorityScoresPath();
+    if (!existsSync(file)) return {};
+    return readJson<Record<string, PriorityScoreRecord>>(file);
+  }
+
+  async writePriorityScore(record: PriorityScoreRecord): Promise<PriorityScoreRecord> {
+    this.assertPriorityScore(record);
+    const scores = await this.readPriorityScores();
+    scores[this.priorityKey(record.feedId, record.cardId)] = record;
+    await writeJson(this.priorityScoresPath(), scores);
+    return record;
+  }
+
+  async listPriorityScoringCandidates(): Promise<Array<{ feed: Pick<FeedConfig, "id" | "name" | "purpose">; card: Card; currentScore?: PriorityScoreRecord }>> {
+    await this.init();
+    const feedIds = await this.workspaceFeeds.listFeedIds();
+    const configs = await Promise.all(feedIds.map((id) => this.readConfig(id)));
+    const scores = await this.readPriorityScores();
+    const candidates: Array<{ feed: Pick<FeedConfig, "id" | "name" | "purpose">; card: Card; currentScore?: PriorityScoreRecord }> = [];
+    for (const config of configs) {
+      if (config.hidden) continue;
+      for (const card of await this.cards.list(config.id)) {
+        if ((card.status !== "to_review_new" && card.status !== "to_review_updated") || card.sweep?.hidden || card.routineActionGroupId) continue;
+        candidates.push({
+          feed: { id: config.id, name: config.name, purpose: config.purpose },
+          card,
+          currentScore: scores[this.priorityKey(config.id, card.id)],
+        });
+      }
+    }
+    return candidates;
+  }
+
+  async recordPriorityInteraction(feedId: string, cardId: string, actionId: string): Promise<void> {
+    const score = (await this.readPriorityScores())[this.priorityKey(feedId, cardId)];
+    if (!score) return;
+    const file = this.priorityInteractionsPath();
+    const interactions = existsSync(file) ? await readJson<PriorityInteraction[]>(file) : [];
+    const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
+    interactions.push({ at: isoNow(), feedId, cardId, clusterKey: score.clusterKey, actionId });
+    await writeJson(file, interactions.filter((item) => Date.parse(item.at) >= cutoff));
+  }
+
+  private assertPriorityScore(record: PriorityScoreRecord): void {
+    const limits: Record<keyof PriorityDimensions, number> = {
+      impact: 35,
+      costOfDelay: 25,
+      strategicAlignment: 20,
+      leverage: 20,
+    };
+    for (const [key, max] of Object.entries(limits) as Array<[keyof PriorityDimensions, number]>) {
+      const value = record.dimensions[key];
+      if (!Number.isInteger(value) || value < 0 || value > max) throw new Error(`${key} must be a whole number from 0 to ${max}.`);
+      if (!record.rationales[key]?.trim()) throw new Error(`${key} requires an evidence-based rationale.`);
+    }
+    if (!record.feedId || !record.cardId || !record.sourceUpdatedAt) throw new Error("Priority score must identify its source card version.");
+    if (!record.clusterKey.trim()) throw new Error("Priority score requires a cluster key.");
+    if (!["low", "medium", "high"].includes(record.confidence)) throw new Error("Invalid priority confidence.");
+    if (!["small", "medium", "large"].includes(record.effort)) throw new Error("Invalid priority effort.");
+  }
+
+  private priorityPenalty(record: PriorityScoreRecord, interactions: PriorityInteraction[], now = Date.now()): { value: number; reason?: string } {
+    const related = interactions
+      .filter((item) => item.clusterKey === record.clusterKey && item.feedId === record.feedId)
+      .map((item) => now - Date.parse(item.at))
+      .filter((age) => age >= 0 && age < 72 * 60 * 60 * 1000)
+      .sort((a, b) => a - b)[0];
+    if (related === undefined) return { value: 0 };
+    const hours = related / (60 * 60 * 1000);
+    let value = hours < 24 ? 20 : Math.max(1, Math.round(10 * (72 - hours) / 48));
+    if (record.dimensions.costOfDelay >= 20) value = Math.min(value, 5);
+    return {
+      value,
+      reason: record.dimensions.costOfDelay >= 20
+        ? "Related work was handled recently, but high delay cost limits the temporary reduction."
+        : "Related work was handled recently; this reduction fades away within 72 hours.",
+    };
+  }
+
+  private async readTopPrioritiesFeed(): Promise<FeedView> {
+    const candidates = await this.listPriorityScoringCandidates();
+    const interactionsFile = this.priorityInteractionsPath();
+    const interactions = existsSync(interactionsFile) ? await readJson<PriorityInteraction[]>(interactionsFile) : [];
+    const cards = candidates.map(({ card, feed, currentScore }) => {
+      const score = currentScore ?? {
+        feedId: feed.id,
+        cardId: card.id,
+        sourceUpdatedAt: card.updatedAt,
+        dimensions: { impact: 0, costOfDelay: 0, strategicAlignment: 0, leverage: 0 },
+        rationales: {
+          impact: "Awaiting an evidence-based score.",
+          costOfDelay: "Awaiting an evidence-based score.",
+          strategicAlignment: "Awaiting an evidence-based score.",
+          leverage: "Awaiting an evidence-based score.",
+        },
+        confidence: "low" as const,
+        effort: "medium" as const,
+        clusterKey: `unscored:${feed.id}:${card.id}`,
+        missingEvidence: ["This card has not been scored yet."],
+        scoredAt: card.updatedAt,
+        scoredBy: "agent" as const,
+      };
+      const baseScore = Object.values(score.dimensions).reduce((sum, value) => sum + value, 0);
+      const penalty = this.priorityPenalty(score, interactions);
+      return {
+        ...card,
+        priority: {
+          ...score,
+          sourceFeedName: feed.name,
+          baseScore,
+          recencyPenalty: penalty.value,
+          score: Math.max(0, baseScore - penalty.value),
+          ...(penalty.reason ? { penaltyReason: penalty.reason } : {}),
+          stale: score.sourceUpdatedAt !== card.updatedAt,
+        },
+      };
+    }).sort((left, right) => {
+      const scoreDelta = (right.priority?.score ?? 0) - (left.priority?.score ?? 0);
+      if (scoreDelta) return scoreDelta;
+      return right.updatedAt.localeCompare(left.updatedAt);
+    }).slice(0, TOP_PRIORITIES_LIMIT).map((card, rank) => ({
+      ...card,
+      // The normal feed selector respects sweep rank first. Pin the projection's score order so
+      // it cannot be re-sorted by the source card's updated/new status in the browser.
+      sweep: { rank, hidden: false, feedbackId: TOP_PRIORITIES_FEED_ID },
+    }));
+    const now = isoNow();
+    return {
+      config: {
+        id: TOP_PRIORITIES_FEED_ID,
+        name: "Top Priorities",
+        purpose: "The ten highest-priority cards currently ready for your review across Tend.",
+        defaultCleanup: "",
+        currentPass: 1,
+        createdAt: now,
+        updatedAt: now,
+      },
+      thread: { homeThreadId: null, boundAt: null, heartbeat: { status: "not_proposed", cadence: null, automationId: null } },
+      sources: [],
+      policy: "This feed is a live projection. Actions operate on the original card in its source feed.",
+      cards,
+      runs: [],
+      routineActions: [],
+      work: [],
+      sweep: { currentBatchId: null, lastFeedbackId: null, recollectionOffered: false, statusMessage: null },
+      drain: defaultDrainState(),
       readyNextPass: 0,
     };
   }

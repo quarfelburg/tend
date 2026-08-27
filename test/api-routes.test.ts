@@ -10,7 +10,11 @@ const roots: string[] = [];
 
 async function setup(
   notify: (data: unknown) => void = () => {},
-  queueCodexThreadMessage?: (input: { threadId: string; prompt: string }) => Promise<{ queuedSubmissionId: string }>,
+  queueCodexThreadMessage?: (input: { threadId: string; threadName: string; prompt: string }) => Promise<{
+    queuedSubmissionId: string;
+    mode: "queued" | "started";
+    threadId: string;
+  }>,
 ) {
   const root = await mkdtemp(path.join(os.tmpdir(), "attention-api-test-"));
   roots.push(root);
@@ -216,12 +220,12 @@ describe("API routing and mutation hardening", () => {
   });
 
   test("adds card context to its Codex task and records the clarity failure", async () => {
-    const queued: Array<{ threadId: string; prompt: string }> = [];
+    const queued: Array<{ threadId: string; threadName: string; prompt: string }> = [];
     const { app, domain, store } = await setup(
       () => {},
       async (input) => {
         queued.push(input);
-        return { queuedSubmissionId: "queued-chat-1" };
+        return { queuedSubmissionId: "queued-chat-1", mode: "queued" as const, threadId: input.threadId };
       },
     );
     await domain.bindFeed("inbox", "thread-codex-chat");
@@ -241,10 +245,12 @@ describe("API routing and mutation hardening", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
       queuedSubmissionId: "queued-chat-1",
+      handoffMode: "queued",
       codexUrl: "codex://threads/thread-codex-chat",
     });
     expect(queued).toHaveLength(1);
     expect(queued[0]).toMatchObject({ threadId: "thread-codex-chat" });
+    expect(queued[0].threadName).toBe("Tend — Inbox");
     expect(queued[0].prompt).toContain("Do not execute, approve, queue, send, publish, edit");
     expect(queued[0].prompt).toContain("Choose route A or route B.");
     expect(queued[0].prompt).toContain("Prepare the selected route after Hayden decides.");
@@ -260,6 +266,29 @@ describe("API routing and mutation hardening", () => {
     });
     expect((await store.readCard("inbox", "chat-context-card")).history.at(-1)?.type).toBe("user.requested_task_chat");
     expect((await store.readEvents("inbox")).at(-1)?.type).toBe("card.task_chat_requested");
+  });
+
+  test("rebinds the feed when an archived task is replaced", async () => {
+    const { app, domain, store } = await setup(
+      () => {},
+      async (_input) => ({ queuedSubmissionId: "queued-chat-2", mode: "queued", threadId: "thread-codex-replacement" }),
+    );
+    await domain.bindFeed("inbox", "thread-codex-archived");
+    await domain.upsertCard("inbox", {
+      id: "chat-rebind-card",
+      title: "Discuss the next step",
+      why: "The old task was archived.",
+      blocks: [{ id: "next", type: "memo", label: "Next", text: "Clarify the decision." }],
+      actions: [],
+    });
+
+    const response = await app.request("/api/feeds/inbox/cards/chat-rebind-card/chat", jsonPost({}));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      codexUrl: "codex://threads/thread-codex-replacement",
+    });
+    expect((await store.readThread("inbox")).homeThreadId).toBe("thread-codex-replacement");
   });
 
   test("returns a warning when browser reassignment sends approved external mutation work to Claude", async () => {
