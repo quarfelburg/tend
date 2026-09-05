@@ -65,6 +65,7 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
   const [undoCardDisposition, setUndoCardDisposition] = useState<CardDispositionUndo | null>(null);
   const [undoQueuedWork, setUndoQueuedWork] = useState<{ feedId: string; workId: string } | null>(null);
   const [undoRevision, setUndoRevision] = useState<string | null>(null);
+  const [startingLearningFeedId, setStartingLearningFeedId] = useState<string | null>(null);
   const [workspaceFocus, setWorkspaceFocus] = useState<VoiceTarget | null>(null);
   const [routeDockToClaude, setRouteDockToClaude] = useState(false);
   const [dockTarget, setDockTarget] = useState<VoiceTarget | null>(() => {
@@ -283,6 +284,18 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
     await withRefresh(() => post(`/api/revision-proposals/${proposal.id}/reject`), "Learning proposal rejected");
     closeWorkspace();
   })();
+  const queueLearning = useCallback(async (targetFeedId: string, targetFeedName: string) => {
+    setStartingLearningFeedId(targetFeedId);
+    try {
+      const work = await post<WorkItemView>(`/api/feeds/${targetFeedId}/compound`);
+      showToast(work.status === "working" ? `Learning pass is running for ${targetFeedName}` : `Learning pass queued for ${targetFeedName}`);
+      await refresh(targetFeedId);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setStartingLearningFeedId((current) => current === targetFeedId ? null : current);
+    }
+  }, [refresh]);
   useEffect(() => {
     if (!state || !feed) return;
     const ids = state.proposals
@@ -434,6 +447,7 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
   };
   const queuedLanes = new Set(feed.work.filter((work) => work.status === "queued").map(workAgent));
   const queuedTabLabel = queuedLanes.size > 1 ? "Queued" : queuedLanes.has("claude") ? "Queued for Claude" : "Queued for Codex";
+  const activeLearningWork = feed.work.find((work) => work.kind === "compound_learnings" && (work.status === "queued" || work.status === "working"));
 
   if (screen === "workspace") return withRealtime(
     <>
@@ -471,7 +485,22 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
             <span>{countFor(feed, item)}</span>
           </button>
         ))}
-        {!isTopPriorities && <button className="tab-quiet" onClick={() => openWorkspace("feed")}>Prompts & sources</button>}
+        {!isTopPriorities && <div className="tab-actions">
+          {compoundProposals.length > 0
+            ? <button className="tab-learn" onClick={openLearningReview}>Review learning proposal</button>
+            : <button
+                className="tab-learn"
+                disabled={Boolean(activeLearningWork) || startingLearningFeedId === feed.config.id}
+                onClick={() => void queueLearning(feed.config.id, feed.config.name)}
+              >
+                {activeLearningWork?.status === "working"
+                  ? "Learning in progress…"
+                  : activeLearningWork || startingLearningFeedId === feed.config.id
+                    ? "Learning queued…"
+                    : "Learn from this feed"}
+              </button>}
+          <button className="tab-quiet" onClick={() => openWorkspace("feed")}>Prompts & sources</button>
+        </div>}
       </nav>
       <main className="page" ref={pageRef}>
         <RevisionProposals proposals={state.proposals} onApply={applyProposal} onReject={rejectProposal} onReviewLearning={openLearningReview} />
@@ -482,7 +511,7 @@ export default function App({ feedId, screen, workspaceTab }: { feedId: string; 
         {cards.map((card, index) => (
           <Fragment key={card.id}>
             {!isTopPriorities && tab === "review" && index === updated.length && fresh.length > 0 && <div className="section-label" key={`${card.id}-label`}>New <span>{fresh.length}</span></div>}
-            <CardView key={card.id} card={card} queuedFor={cardQueuedFor(card.id)} queuedNote={editableQueuedNote(card)} active={card.id === activeCard?.id} onActivate={() => setActiveCardId(card.id)} onChanged={() => void refresh()} onAction={(action) => runCardAction(card, action)} onChat={() => chatAboutCard(card)} onPriorityOverride={isTopPriorities ? (input) => overridePriority(card, input) : undefined} onHeartbeatDisposition={(disposition, parkedUntil) => setHeartbeatDisposition(card, disposition, parkedUntil)} onReturnToReview={() => returnToReview(card)} />
+            <CardView key={card.id} card={card} queuedFor={cardQueuedFor(card.id)} queuedNote={editableQueuedNote(card)} active={card.id === activeCard?.id} onActivate={() => setActiveCardId(card.id)} onChanged={() => void refresh()} onAction={(action) => runCardAction(card, action)} onChat={() => chatAboutCard(card)} onLearn={isTopPriorities ? () => queueLearning(card.feedId, card.priority?.sourceFeedName ?? card.feedId) : undefined} learningLabel={isTopPriorities ? `Learn from ${card.priority?.sourceFeedName ?? "source feed"}` : undefined} onPriorityOverride={isTopPriorities ? (input) => overridePriority(card, input) : undefined} onHeartbeatDisposition={(disposition, parkedUntil) => setHeartbeatDisposition(card, disposition, parkedUntil)} onReturnToReview={() => returnToReview(card)} />
           </Fragment>
         ))}
         {feedWork.map((work) => (

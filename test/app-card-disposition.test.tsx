@@ -166,6 +166,7 @@ test("Top Priorities shows the Tend dock scoped to the source card", async () =>
     policy: "This is a live projection.",
   };
   const targetChanges: Array<Record<string, unknown>> = [];
+  const learningRequests: string[] = [];
   globalThis.fetch = (async (input, init) => {
     const url = String(input);
     if (url === "/api/session") return Response.json({ mutationToken: "test-token" });
@@ -174,6 +175,19 @@ test("Top Priorities shows the Tend dock scoped to the source card", async () =>
       const body = JSON.parse(String(init?.body));
       targetChanges.push(body);
       return Response.json(body.target);
+    }
+    if (url === "/api/feeds/inbox/compound") {
+      learningRequests.push(url);
+      return Response.json({
+        id: "work-learning",
+        feedId: "inbox",
+        cardId: "__feed__",
+        status: "queued",
+        kind: "compound_learnings",
+        instruction: "Learn from the feed.",
+        createdAt: "2026-07-05T12:05:00.000Z",
+        updatedAt: "2026-07-05T12:05:00.000Z",
+      });
     }
     throw new Error(`Unexpected request: ${url}`);
   }) as typeof fetch;
@@ -196,6 +210,9 @@ test("Top Priorities shows the Tend dock scoped to the source card", async () =>
     feedId: "inbox",
     target: { kind: "card", feedId: "inbox", cardId: "cleanup-card" },
   });
+  fireEvent.click(view.getByRole("button", { name: "Learn from Inbox" }));
+  await waitFor(() => expect(learningRequests).toEqual(["/api/feeds/inbox/compound"]));
+  expect(await view.findByText("Learning pass queued for Inbox")).toBeTruthy();
 });
 
 function looseEndCard(): Card {

@@ -40,9 +40,12 @@ export function TopBar({
         ? "Queue inactive"
         : queueRunner?.state === "processed"
           ? `Queue checked ${queueCheckAge} · Work processed`
-          : `Queue checked ${queueCheckAge} · Empty`;
-  const lastProcessedTime = queueRunner?.lastProcessedAt
-    ? new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(queueRunner.lastProcessedAt))
+          : `Queue checked ${queueCheckAge} · Nothing claimable`;
+  const lastFeedWork = state.active.work
+    .filter((work) => work.status === "completed" || work.status === "failed")
+    .sort((left, right) => (right.completedAt ?? right.updatedAt).localeCompare(left.completedAt ?? left.updatedAt))[0];
+  const lastFeedWorkTime = lastFeedWork
+    ? new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(lastFeedWork.completedAt ?? lastFeedWork.updatedAt))
     : null;
   const workspaceLinks = (state.links ?? []).map((link) => ({
     ...link,
@@ -67,13 +70,13 @@ export function TopBar({
       <button className="menu-trigger" onClick={() => setOpen(!open)} aria-label="Open feed navigation">☰</button>
       <strong>{title}</strong>
       {queueRunner && (
-        <span className={`tend-status-chip tend-status-${queueRunner.state}`} title={`Queue last checked at ${queueRunner.lastCheckedAt}`}>
+        <span className={`tend-status-chip tend-status-${queueRunner.state}`} title={`Shared Tend queue last checked at ${queueRunner.lastCheckedAt}`}>
           {queueCheckLabel}
         </span>
       )}
-      {lastProcessedTime && (
-        <span className={`tend-status-chip tend-status-secondary tend-status-${queueRunner?.lastProcessedStatus ?? "succeeded"}`} title={`Work last processed at ${queueRunner?.lastProcessedAt}`}>
-          Last work · {lastProcessedTime}
+      {lastFeedWorkTime && (
+        <span className={`tend-status-chip tend-status-secondary tend-status-${lastFeedWork.status === "failed" ? "failed" : "succeeded"}`} title={`Latest task finished in ${state.active.config.name} at ${lastFeedWork.completedAt ?? lastFeedWork.updatedAt}`}>
+          This feed last task · {lastFeedWorkTime}
         </span>
       )}
       {workspaceLinks.length > 0 && <nav className="workspace-links" aria-label="Workspace links">

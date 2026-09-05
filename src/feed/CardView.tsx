@@ -537,6 +537,8 @@ export function CardView({
   onChanged,
   onAction,
   onChat = async () => {},
+  onLearn,
+  learningLabel,
   onPriorityOverride,
   onHeartbeatDisposition,
   onReturnToReview,
@@ -549,6 +551,8 @@ export function CardView({
   onChanged: () => void;
   onAction: (action: CardAction) => void;
   onChat?: () => Promise<void>;
+  onLearn?: () => Promise<void>;
+  learningLabel?: string;
   onPriorityOverride?: (input: NonNullable<Card["priority"]>) => Promise<void>;
   onHeartbeatDisposition?: (disposition: HeartbeatCardDispositionKind, parkedUntil?: string) => void;
   onReturnToReview: () => void;
@@ -557,6 +561,7 @@ export function CardView({
   const [showParkDate, setShowParkDate] = useState(false);
   const [parkedUntil, setParkedUntil] = useState("");
   const [openingChat, setOpeningChat] = useState(false);
+  const [startingLearning, setStartingLearning] = useState(false);
   const actions = visibleCardActions(card);
   const orderedBlocks = orderedCardBlocks(card.blocks);
   const heartbeatActionsAvailable = card.feedId === "anti-adhd-loose-ends-review-surface-unfinished-codex-ses" && onHeartbeatDisposition;
@@ -611,6 +616,21 @@ export function CardView({
             >
               {openingChat ? "Opening chat…" : "Chat about this task"}
             </button>
+            {onLearn && (
+              <button
+                className="button ghost learn-from-feed"
+                disabled={startingLearning}
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setStartingLearning(true);
+                  void onLearn().finally(() => setStartingLearning(false));
+                }}
+                type="button"
+              >
+                {startingLearning ? "Starting learning…" : learningLabel ?? "Learn from this feed"}
+              </button>
+            )}
             {actions.map((action) => (
               <button
                 aria-keyshortcuts={action.shortcut}

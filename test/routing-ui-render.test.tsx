@@ -68,14 +68,37 @@ function workspace(active = feed(), overrides: Partial<WorkspaceView> = {}): Wor
 }
 
 test("TopBar separates the latest queue check from the latest processed work", () => {
+  const active = feed({
+    work: [{
+      id: "work-complete",
+      feedId: "inbox",
+      cardId: "card-a",
+      kind: "instruction",
+      instruction: "Do the bounded work.",
+      status: "completed",
+      createdAt: "2026-07-05T12:03:00.000Z",
+      updatedAt: "2026-07-05T12:04:00.000Z",
+      completedAt: "2026-07-05T12:04:00.000Z",
+    }],
+  });
+  const html = renderToStaticMarkup(
+    <TopBar state={workspace(active)} onFeed={() => {}} />,
+  );
+
+  expect(html).toContain("Queue checked &lt;1 min ago · Nothing claimable");
+  expect(html).toContain("This feed last task");
+  expect(html).toContain("Latest task finished in Inbox");
+  expect(html).toContain("tend-status-empty");
+  expect(html).not.toContain("Claude live");
+});
+
+test("TopBar does not show another feed's last task when this feed has no finished work", () => {
   const html = renderToStaticMarkup(
     <TopBar state={workspace()} onFeed={() => {}} />,
   );
 
-  expect(html).toContain("Queue checked &lt;1 min ago · Empty");
-  expect(html).toContain("Last work");
-  expect(html).toContain("tend-status-empty");
-  expect(html).not.toContain("Claude live");
+  expect(html).not.toContain("This feed last task");
+  expect(html).not.toContain("Latest task across feeds");
 });
 
 test("TopBar calls out a failed latest queue check", () => {
