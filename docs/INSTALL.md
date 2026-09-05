@@ -127,6 +127,27 @@ pnpm tend -- status
 It also calls the running local API at `/api/status`, so run `tend start` first when you want
 the full server, version contract, and API readiness check to be green.
 
+## macOS Launchd Scheduler
+
+On macOS, Tend can install a user-level LaunchAgent that keeps Tend running after login and enables
+the Codex queue drain. The default drain check runs every five minutes:
+
+```sh
+./tend scheduler install
+./tend scheduler status
+```
+
+The scheduler uses the current Tend runtime home and executable, stores its plist under
+`~/Library/LaunchAgents`, and writes launchd output under the Tend home. It does not choose a model,
+create Codex threads, or grant permission for external actions. Those remain part of the user's
+Codex and feed configuration.
+
+Remove it with:
+
+```sh
+./tend scheduler uninstall
+```
+
 ## Backup And Restore
 
 ```sh

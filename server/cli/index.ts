@@ -5,6 +5,7 @@ import { doctorCommand, statusCommand } from "./health";
 import { helpCommand } from "./help";
 import { runOperatorCli } from "./operator";
 import { healthCommand, logsCommand, restartCommand, stopCommand } from "./service";
+import { schedulerInstallCommand, schedulerStatusCommand, schedulerUninstallCommand } from "./scheduler";
 import { setupCodexCommand } from "./setup";
 import { startCommand } from "./start";
 import { versionCommand } from "./version";
@@ -40,6 +41,12 @@ export async function runTendCli(rawArgs: string[]): Promise<void> {
       break;
     case "doctor":
       await doctorCommand();
+      break;
+    case "scheduler":
+      if (subcommand === "install") await schedulerInstallCommand();
+      else if (subcommand === "status") await schedulerStatusCommand();
+      else if (subcommand === "uninstall") await schedulerUninstallCommand();
+      else throw new Error("Expected: tend scheduler install|status|uninstall");
       break;
     case "setup":
       if (subcommand !== "codex") throw new Error("Expected: tend setup codex [--feed <id> | --chronicle]");

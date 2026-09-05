@@ -80,7 +80,7 @@ export class DrainDispatcher {
 
   constructor(private readonly store: AttentionStore, options: DispatcherOptions) {
     this.options = {
-      intervalMs: 20_000,
+      intervalMs: 5 * 60_000,
       minQueueAgeMs: 60_000,
       activeClaimWindowMs: 10 * 60_000,
       ...options,

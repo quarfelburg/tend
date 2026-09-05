@@ -105,6 +105,15 @@ cd tend-<version>-<platform>-<arch>
 
 Open `http://127.0.0.1:4332` in **Codex Desktop's in-app browser**.
 
+On macOS, install the optional default LaunchAgent after extracting Tend:
+
+```sh
+./tend scheduler install
+```
+
+This keeps Tend running after login and checks queued Codex work every five minutes. See
+[`docs/INSTALL.md`](./docs/INSTALL.md#macos-launchd-scheduler) for status and removal.
+
 ### 2. Create a Feed
 
 Inbox is available on first launch. To make another feed, open the feed menu, choose

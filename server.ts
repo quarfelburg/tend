@@ -30,7 +30,12 @@ const mutationToken = process.env.ATTENTION_MUTATION_TOKEN ?? makeToken();
 const realtime = createRealtimeHub();
 const feedEventBridge = createFeedEventBridge(store, realtime.notify);
 await feedEventBridge.start();
-const drainDispatcher = new DrainDispatcher(store, { appRoot: root, runtimeRoot });
+const drainIntervalMs = Number(process.env.ATTENTION_AUTODRAIN_INTERVAL_MS ?? 5 * 60_000);
+const drainDispatcher = new DrainDispatcher(store, {
+  appRoot: root,
+  runtimeRoot,
+  intervalMs: Number.isFinite(drainIntervalMs) && drainIntervalMs > 0 ? drainIntervalMs : 5 * 60_000,
+});
 if (process.env.ATTENTION_AUTODRAIN === "1") drainDispatcher.start();
 const mobileConfig = mobileCloudConfigFromEnv();
 const mobileSync = mobileConfig
